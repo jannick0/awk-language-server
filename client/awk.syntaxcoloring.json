@@ -1,0 +1,176 @@
+{
+  "scopeName": "source.awk",
+  "name": "AWK",
+  "comment": "AWK language",
+  "fileTypes": [
+    "awk"
+  ],
+  "foldingStartMarker": "({|\\()\\s*$",
+  "foldingStopMarker": "(}|\\))\\s*$",
+  "patterns": [
+    {
+      "comment": "Doc comments",
+      "begin": "///",
+      "beginCaptures": {
+        "0": {
+          "name": "comment.documentation.awk"
+        }
+      },
+      "end": "$",
+      "name": "comment.documentation.awk"
+    },
+    {
+      "comment": "Line comments",
+      "begin": "#",
+      "beginCaptures": {
+        "0": {
+          "name": "comment.awk"
+        }
+      },
+      "end": "$",
+      "name": "comment.line.double-slash.awk"
+    },
+    {
+      "comment": "Interpreted string literals",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.awk"
+        }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.awk"
+        }
+      },
+      "name": "string.quoted.double.awk",
+      "patterns": [
+        {
+          "include": "#string_escaped_char"
+        }
+      ]
+    },
+    {
+      "comment": "Built-in functions",
+      "match": "\\b(atan2|cos|exp|int|log|rand|sin|sqrt|srand|asort|asorti|gensub|gsub|index|length|match|patsplit|split|sprintf|strtonum|sub|substr|tolower|toupper|close|fflush|system|mktime|strftime|systime|and|compl|lshift|or|rshift|xor)\\b",
+      "name": "support.function.builtin.awk"
+    },
+    {
+      "comment": "Regular expressions",
+      "match": "/.*/",
+      "name": "string.regexp"
+    },
+    {
+      "comment": "Floating-point literals",
+      "match": "(\\.\\d+([Ee][-+]\\d+)?i?)\\b|\\b\\d+\\.\\d*(([Ee][-+]\\d+)?i?\\b)?",
+      "name": "constant.numeric.floating-point.awk"
+    },
+    {
+      "comment": "Integers",
+      "match": "\\b((0x[0-9a-fA-F]+)|(0[0-7]+i?)|(\\d+([Ee]\\d+)?i?)|(\\d+[Ee][-+]\\d+i?))\\b",
+      "name": "constant.numeric.integer.awk"
+    },
+    {
+      "include": "#brackets"
+    },
+    {
+      "include": "#delimiters"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "brackets": {
+      "patterns": [
+        {
+          "match": "\\{|\\}",
+          "name": "punctuation.other.bracket.curly.awk"
+        },
+        {
+          "match": "\\(|\\)",
+          "name": "punctuation.other.bracket.round.awk"
+        },
+        {
+          "match": "\\[|\\]",
+          "name": "punctuation.other.bracket.square.awk"
+        }
+      ]
+    },
+    "delimiters": {
+      "patterns": [
+        {
+          "match": ",",
+          "name": "punctuation.other.comma.awk"
+        },
+        {
+          "match": "\\.",
+          "name": "punctuation.other.period.awk"
+        },
+        {
+          "match": ":",
+          "name": "punctuation.other.colon.awk"
+        },
+        {
+          "match": ";",
+          "name": "punctuation.other.semicolon.awk"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "comment": "reserved words",
+          "match": "\\b(function|BEGIN|END|next|if|for|while|return|break|continue|print|printf|exit|else|switch|case|default|do)\\b",
+          "name": "keyword.control.awk"
+        }
+      ]
+    },
+    "variables": {
+      "comment": "First add tests and make sure existing tests still pass when changing anything here!",
+      "patterns": [
+        {
+          "match": "[a-zA-Z_][a-zA-Z_0-9]*",
+          "name": "variable.awk"
+        }
+      ]
+    },
+    "operators": {
+      "comment": "Operators",
+      "patterns": [
+          {
+            "match": "(!?~|[=&lt;&gt;!]=|[&lt;&gt;])",
+            "name": "keyword.operator.comparison.awk"
+          },
+          {
+            "match": "\b(in)\b",
+            "name": "keyword.operator.comparison.awk"
+          },
+          {
+            "match": "([+\\-*/%^]=|\\+\\+|--|&gt;&gt;|=)",
+            "name": "keyword.operator.assignment.awk"
+          },
+          {
+            "match": "(\\|\\||&&;|!)",
+            "name": "keyword.operator.boolean.awk"
+          },
+          {
+            "match": "([+\\-*/%^]|\\*\\*)",
+            "name": "keyword.operator.arithmetic.awk"
+          },
+          {
+            "match": "([?:])",
+            "name": "keyword.operator.trinary.awk"
+          },
+          {
+            "match": "(\\[|\\])",
+            "name": "keyword.operator.index.awk"
+          }
+      ]
+    }
+  }
+}

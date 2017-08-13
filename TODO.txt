@@ -1,0 +1,15 @@
+- do not mark write/position (display?) labels as context use.
+
+- store definition of children
+- recognize [{children: {x: }} ...] as reference to child
+
+- accept context definition in screenArea
+
+- accept context definition in [classes/screenArea, ..., children, <name>, description, context].
+
+- position constraints with identical names
+  - positions are “use”, not “define”, but positioning labels possibly are.
+
+- mark unknown classes; reparse documents with unknown classes after a change to the class list.
+
+- expressions in function calls unrecognized.

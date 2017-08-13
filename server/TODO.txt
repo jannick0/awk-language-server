@@ -1,0 +1,4 @@
+- add local variable support
+- check nr function parameters
+- check assignment's lvalue
+- check if statement has effect (no assignment-less expressions)

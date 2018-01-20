@@ -17,3 +17,8 @@ Implements a number of VSCode's language server functions for awk files: syntax 
   variables only available in gawk.
 
 * awk.path: list of paths to include directories (only in gawk mode).
+
+## Peculiarities:
+
+Comments with a double hash (\#\#) before a function declaration are considered
+doc-comments, and are shown in the hover text.

@@ -3,16 +3,16 @@
 	"description": "Implementation of a language server in node.",
 	"version": "0.0.1",
 	"author": "TGV",
-	"license": "none",
+	"license": "CC-BY-ND-4.0",
 	"engines": {
 		"node": "^6.9.0"
 	},
 	"dependencies": {
-		"vscode-languageserver": "^3.1.0"
+		"vscode-languageserver": "^3.4.3"
 	},
 	"devDependencies": {
-		"typescript": "^2.2.0",
-		"@types/node": "^6.0.52"
+		"@types/node": "^6.0.90",
+		"typescript": "^2.5.3"
 	},
 	"scripts": {
 		"compile": "installServerIntoExtension ../client ./package.json ./tsconfig.json && tsc -p .",

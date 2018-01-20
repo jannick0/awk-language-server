@@ -5,21 +5,22 @@
 	"author": "TGV",
 	"license": "CC-BY-ND-4.0",
 	"engines": {
-		"node": "^6.9.0"
+		"node": "*"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://teegeevee.visualstudio.com/awk-language-server"
 	},
 	"dependencies": {
-		"vscode-languageserver": "^3.4.3"
+		"vscode-languageserver": "^3.4.2"
 	},
 	"devDependencies": {
 		"@types/node": "^6.0.90",
 		"typescript": "^2.5.3"
 	},
 	"scripts": {
+		"installServer": "installServerIntoExtension ../client ./package.json ./tsconfig.json",
 		"compile": "installServerIntoExtension ../client ./package.json ./tsconfig.json && tsc -p .",
-		"watch": "installServerIntoExtension ../client ./package.json ./tsconfig.json && tsc --watch -p ."
-	},
-	"repository": {
-		"type": "svn",
-		"url": "http://unknown.com"
+		"watch": "installServerIntoExtension ../client ./package.json ./tsconfig.json && tsc -w -p ."
 	}
 }

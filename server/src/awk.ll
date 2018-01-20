@@ -221,6 +221,13 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
         description: "Search the target string target for matches of the regular expression regexp. If how is a string beginning with 'g' or 'G' (short for \"global\"), then replace all matches of regexp with replacement. Otherwise, how is treated as a number indicating which match of regexp to replace. If no target is supplied, use $0. It returns the modified string as the result of the function and the original target string is not changed. gensub() provides an additional feature that is not available in sub() or gsub(): the ability to specify components of a regexp in the replacement text. This is done by using parentheses in the regexp to mark the components and then specifying '\\N' in the replacement text, where N is a digit from 1 to 9",
         awk: false
     },
+    getline: {
+        name: "getline",
+        parameters: [],
+        firstOptional: 0,
+        description: "Get line from input",
+        awk: true
+    },
     gsub: {
         name: "gsub",
         parameters: ["regexp", " replacement", " target"],
@@ -260,6 +267,19 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
         parameters: ["string", " array", " fieldsep", " seps"],
         firstOptional: 3,
         description: "Divide string into pieces separated by fieldsep and store the pieces in array and the separator strings in the seps array. The first piece is stored in array[1], the second piece in array[2], and so forth. The string value of the third argument, fieldsep, is a regexp describing where to split string (much as FS can be a regexp describing where to split input records). If fieldsep is omitted, the value of FS is used. split() returns the number of elements created. seps is a gawk extension, with seps[i] being the separator string between array[i] and array[i+1]. If fieldsep is a single space, then any leading whitespace goes into seps[0] and any trailing whitespace goes into seps[n], where n is the return value of split() (i.e., the number of elements in array).",
+        awk: true
+    },
+    print: {
+        name: "print",
+        parameters: ["expression"],
+        firstOptional: 0,
+        description: "Print the expression, or $0 if missing.",
+        awk: true
+    },
+    printf: {
+        name: "printf",
+        parameters: ["format", " expression1", " ..."],
+        description: "Print the format string replacing the arguments with the expressions.",
         awk: true
     },
     sprintf: {
@@ -318,6 +338,13 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
         name: "system",
         parameters: ["command"],
         description: "Execute the operating system command command and then return to the awk program. Return command's exit status (see further on).",
+        awk: true
+    },
+    exit: {
+        name: "exit",
+        parameters: ["status"],
+        firstOptional: 0,
+        description: "Exits the awk script immediately",
         awk: true
     },
     mktime: {
@@ -881,8 +908,11 @@ delete_statement:
 
 print_statement:
     (
-        print_sym;
+        print_sym, {
+            usageFun(SymbolType.func, "print", lastSymbolPos.line, lastSymbolPos.position);
+        };
         printf_sym, {
+            usageFun(SymbolType.func, "printf", lastSymbolPos.line, lastSymbolPos.position);
             if (stylisticWarnings.gawkCompatibility) {
                 messageFun("error", "mode", "only available in gawk",
                         lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
@@ -984,5 +1014,7 @@ return_statement(is_line_block boolean):
     SHIFT logical_expression OPTION.
 
 exit_statement(is_line_block boolean):
-    exit_sym,
+    exit_sym, {
+        usageFun(SymbolType.func, "exit", lastSymbolPos.line, lastSymbolPos.position);
+    },
     SHIFT logical_expression OPTION.

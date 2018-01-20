@@ -6,17 +6,17 @@
 
 import * as path from 'path';
 
-import { workspace, Disposable, ExtensionContext, languages } from 'vscode';
-import { LanguageClient, LanguageClientOptions, SettingMonitor, ServerOptions, TransportKind } from 'vscode-languageclient';
+import { workspace, ExtensionContext } from 'vscode';
+import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from 'vscode-languageclient';
 
 export function activate(context: ExtensionContext) {
 
 	// The server is implemented in node
 	let serverModule = context.asAbsolutePath(path.join('server', 'server.js'));
 	// The debug options for the server
-	let debugOptions = { execArgv: ["--nolazy", "--debug=6004"] };
+	let debugOptions = { execArgv: ["--nolazy", "--inspect=6009"] };
 	
-	// If the extension is launch in debug mode the debug server options are use
+	// If the extension is launched in debug mode then the debug server options are used
 	// Otherwise the run options are used
 	let serverOptions: ServerOptions = {
 		run : { module: serverModule, transport: TransportKind.ipc },
@@ -26,7 +26,7 @@ export function activate(context: ExtensionContext) {
 	// Options to control the language client
 	let clientOptions: LanguageClientOptions = {
 		// Register the server for plain text documents
-		documentSelector: ['awk'],
+		documentSelector: [{scheme: 'file', language: 'awk'}],
 		synchronize: {
 			// Synchronize the setting section 'awk' to the server
 			configurationSection: 'awk',

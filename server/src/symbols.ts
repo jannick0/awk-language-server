@@ -62,7 +62,8 @@ export class SymbolDefinition implements Equal {
         public position: Position,
         public type: SymbolType,
         public docComment: string,
-        symbol: string
+        symbol: string,
+        public isImplicitDefinition: boolean
     ) {
         this.symbol = symbol;
     }

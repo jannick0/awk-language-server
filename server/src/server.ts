@@ -4,7 +4,7 @@ import {
     IPCMessageReader, IPCMessageWriter, createConnection, IConnection, TextDocuments,
     DiagnosticSeverity, InitializeParams, InitializeResult, CompletionItem,
     CompletionItemKind, Location, Range, Position, Definition, Hover,
-    SymbolInformation, SymbolKind, TextDocumentIdentifier, ReferenceParams,
+    SymbolInformation, SymbolKind, ReferenceParams,
     WorkspaceSymbolParams, TextDocumentPositionParams, TextDocument,
     DocumentSymbolParams, DidCloseTextDocumentParams
 } from 'vscode-languageserver';
@@ -16,7 +16,7 @@ import {
 } from "./awk";
 
 import  {
-    PathPositionNode, PathPositionTree, finishPositionTree
+    finishPositionTree
 } from './path';
 
 import {
@@ -39,7 +39,7 @@ import {
 } from './filesystem';
 
 import {
-    setDebugLogDir, debugLog
+    setDebugLogDir
 } from './filesystem';
 
 // PROCESSING QUEUE
@@ -63,24 +63,6 @@ class ProcessQueueItem {
 let processingAllowed: boolean = true;
 
 let processingQueue: ProcessQueueItem[] = [];
-
-function haltProcessingQueue(): void {
-    processingAllowed = false;
-    // debugLog("halt queue"); // !!!
-}
-
-function allowProcessingQueue(): void {
-    processingAllowed = true;
-    // debugLog("resume queue " + processingQueue.map(function (pqi): string {
-    //     return pqi.doc.getShortName() + " (" + ProcessQueueItemType[pqi.type] + ")";
-    // }).join(", "));  // !!!
-}
-
-function addToFrontOfProcessingQueue(doc: AWKDocument, text: string, type: ProcessQueueItemType, openInEditor: boolean): void {
-    // debugLog("add to front of queue " + doc.getShortName() + " " + ProcessQueueItemType[type]); // !!!
-    processingQueue.unshift({doc: doc, text: text, type: type, openInEditor: openInEditor});
-    processNextQueueItem();
-}
 
 function addToEndOfProcessingQueue(doc: AWKDocument, text: string, type: ProcessQueueItemType, openInEditor: boolean): void {
     // debugLog("add to end of queue " + doc.getShortName() + " " + ProcessQueueItemType[type]); // !!!
@@ -115,11 +97,6 @@ function finishUpProcessing(): void {
 } 
 
 // LANGUAGE DEFINITION AND USAGE
-
-function processConfiguration(doc: AWKDocument, configText: string): void {
-    //connection.console.log("config ${doc.uri}"); // !!!
-    // no config read
-}
 
 // CALLBACK FROM THE PARSER
 
@@ -192,7 +169,7 @@ let documentMap: Map<string, AWKDocument> = new Map();
 
 function addSymbolDefinition(type: SymbolType, doc: AWKDocument, symbol: string, position: Position, docComment: string): void {
     let symbolDefinition: SymbolDefinition = new SymbolDefinition(
-        doc, position, type, docComment, symbol);
+        doc, position, type, docComment, symbol, false);
 
     doc.addSymbolDefinition(symbol, symbolDefinition);
     let defineType = getSymbolDefineType(type);
@@ -204,7 +181,15 @@ function addSymbolDefinition(type: SymbolType, doc: AWKDocument, symbol: string,
 // Store symbol usage
 function addSymbolUsage(type: SymbolType, doc: AWKDocument, symbol: string, position: Position): void {
     let usage = new SymbolUsage(symbol, type, position);
-    
+
+    if (type === SymbolType.globalVariable && !doc.isSymbolDefined(symbol, type)) {
+        // In AWK, global variables can be introduced by naming them, so the first
+        // occurence is stored as definition. Jumping to that definition
+        // doesn't make sense, so its position is left undefined.
+        let symbolDefinition: SymbolDefinition = new SymbolDefinition(
+            doc, position, type, "", symbol, true);
+        doc.addSymbolDefinition(symbol, symbolDefinition);
+    }
     doc.addSymbolUsage(usage);
 }
 
@@ -402,24 +387,6 @@ function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams)
     }
 }
 
-function dumpPositionTree(tree: PathPositionTree, indent: string = ""): string {
-    let txt: string = "";
-    let nextIndent: string = indent + "  ";
-
-    function formatpos(p: Position|undefined): string {
-        return p !== undefined? p.line + ":" + p.character: "?";
-    }
-
-    for (var i = 0; i < tree.length; i++) {
-        var node: PathPositionNode = tree[i];
-        txt += indent + node.attribute + " [" + formatpos(node.start) + "," + formatpos(node.avStart) + "," + formatpos(node.end) + "]" + "\n";
-        if (node.next !== undefined) {
-            txt += dumpPositionTree(node.next, nextIndent);
-        }
-    }
-    return txt;
-}
-
 function builtInCompletions(textDocumentPosition: TextDocumentPositionParams): CompletionItem[] {
     return Object.keys(builtInSymbols).map(bif => {
         return {
@@ -455,15 +422,13 @@ function leftAlign(docComment: string): string {
 // Finds symbol to be completed and returns all symbols with a corresponding
 // definition.
 function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams): CompletionItem[] {
-    let usage = findSymbolForPosition(textDocumentPosition);
     let compl = builtInCompletions(textDocumentPosition);
 
-    let usageType: SymbolType|undefined = usage === undefined? undefined: usage.type;
     let completions: Map<string, Set<string>> = new Map();
     documentMap.forEach(function(doc: AWKDocument): void {
         for (var type = 0; type < doc.definedSymbols.length; type++) {
             let defMap = doc.definedSymbols[type];
-            if (defMap !== undefined && (usageType === undefined || type === usageType)) {
+            if (defMap !== undefined) {
                 defMap.forEach(function(definitions: SymbolDefinition[], symbol: string): void {
                     if (symbol !== undefined /*&& symbol.startsWith(usage!.symbol)*/) {
                         for (let i = 0; i < definitions.length; i++) {
@@ -471,7 +436,7 @@ function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams):
                             if (!completions.has(symbol)) {
                                 completions.set(symbol, new Set());
                             }
-                            if (def.docComment !== "") {
+                            if (def.docComment !== undefined && def.docComment !== "") {
                                 completions.get(symbol)!.add(leftAlign(def.docComment));
                             }
                         }
@@ -482,16 +447,26 @@ function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams):
     });
     let ci: CompletionItem[] = [];
     completions.forEach(function(docComments: Set<string>, symbol: string): void {
-        docComments.forEach(function(docComment: string): void {
+        if (docComments.size === 0) {
             ci.push({
                 label: symbol,
                 kind: SymbolKind.Interface,
                 data: {
-                    symbol: symbol,
-                    docComment: docComment
+                    symbol: symbol
                 }
             });
-        });
+        } else {
+            docComments.forEach(function(docComment: string): void {
+                ci.push({
+                    label: symbol,
+                    kind: SymbolKind.Interface,
+                    data: {
+                        symbol: symbol,
+                        docComment: docComment
+                    }
+                });
+            });
+        }
     });
     return ci.concat(compl);
 }
@@ -535,6 +510,9 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
                 let def = definitions[i];
                 let text: string|undefined;
                 switch (def.type) {
+                  case SymbolType.globalVariable:
+                    text = "global variable";
+                    break;
                   case SymbolType.localVariable:
                     text = "parameter/local variable";
                     break;
@@ -580,7 +558,9 @@ function awkDefinitionProvider(textDocumentPosition: TextDocumentPositionParams)
             let definitions = defMap.get(usage!.symbol)!;
             for (let i = 0; i < definitions.length; i++) {
                 let def = definitions[i];
-                definitionDistance.push({definition: def});
+                if (!def.isImplicitDefinition) {
+                    definitionDistance.push({definition: def});
+                }
             }
         }
     });

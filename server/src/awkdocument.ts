@@ -14,7 +14,8 @@ import {
 
 import {
     SymbolUsage,
-    SymbolDefinition
+    SymbolDefinition,
+    SymbolType
 } from './symbols';
 
 export class IncludeDeclarationInfo implements Equal {
@@ -89,6 +90,12 @@ export class AWKDocument {
             map.set(symbol, []);
         }
         map.get(symbol)!.push(symbolDefinition);
+    }
+
+    isSymbolDefined(symbol: string, type: SymbolType): boolean {
+        let map = this.definedSymbols[type];
+
+        return map !== undefined && map.has(symbol);
     }
 
     addSymbolUsage(usage: SymbolUsage): void {

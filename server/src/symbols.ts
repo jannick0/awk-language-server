@@ -3,6 +3,10 @@ import {
 } from './util';
 
 import {
+    positionCompare
+} from './path';
+
+import {
     Position, Range
 } from 'vscode-languageserver';
 
@@ -55,6 +59,8 @@ export class SymbolDefinition implements Equal {
     /** the symbol itself; when undefined, it represents screenArea */
     private symbol: string;
 
+    parameterList: SymbolDefinition[];
+
     constructor(
         /// file in which it is defined
         public document: AWKDocument,
@@ -74,7 +80,7 @@ export class SymbolDefinition implements Equal {
 
     isEqual(p: SymbolDefinition): boolean {
         return this.symbol === p.symbol && this.document === p.document &&
-            this.position === p.position && this.type === p.type &&
+            positionCompare(this.position, p.position) === 0 && this.type === p.type &&
             this.docComment === p.docComment;
     }
 
@@ -97,10 +103,31 @@ export class SymbolUsage implements Equal {
 
     isEqual(p: SymbolUsage): boolean {
         return this.symbol === p.symbol && this.type === p.type &&
-               this.position === p.position;
+               positionCompare(this.position, p.position) === 0;
     }
 
     getRange(): Range {
         return getRange(this.position, this.symbol === undefined? 10: this.symbol.length);
+    }
+}
+
+export class ParameterUsage implements Equal {
+    constructor(
+        /// The symbol itself
+        public functionName: SymbolUsage,
+        /// The parameter index
+        public parameterIndex: number,
+        /// position in text
+        public position: Position,
+        /// start or end of parameter
+        public start: boolean
+    ) {
+    }
+
+    isEqual(p: ParameterUsage): boolean {
+        return this.functionName.isEqual(p.functionName) &&
+               this.parameterIndex === p.parameterIndex &&
+               positionCompare(this.position, p.position) === 0 &&
+               this.start === p.start;
     }
 }

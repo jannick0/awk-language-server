@@ -4,7 +4,7 @@ import {
 
 import {
     Diagnostic, Position, DiagnosticSeverity, Range,
-    IConnection
+    IConnection, ParameterInformation
 } from 'vscode-languageserver';
 
 import {
@@ -15,7 +15,8 @@ import {
 import {
     SymbolUsage,
     SymbolDefinition,
-    SymbolType
+    SymbolType,
+    ParameterUsage
 } from './symbols';
 
 export class IncludeDeclarationInfo implements Equal {
@@ -77,6 +78,8 @@ export class AWKDocument {
         this.definedSymbols = [];
         this.usedSymbols = [];
         this.positionTree = [];
+        this.functionCallStack = [];
+        this.parameterUsage = [];
         this.includes = new EMap<AWKDocument, IncludeDeclarationInfo>();
     }
 
@@ -93,7 +96,7 @@ export class AWKDocument {
     }
 
     isSymbolDefined(symbol: string, type: SymbolType): boolean {
-        let map = this.definedSymbols[type];
+        const map = this.definedSymbols[type];
 
         return map !== undefined && map.has(symbol);
     }
@@ -108,7 +111,7 @@ export class AWKDocument {
     clearIncludedBy(): boolean {
         let inclChanges: boolean = false;
 
-        for (let includedDoc of this.includes.keys()) {
+        for (const includedDoc of this.includes.keys()) {
             includedDoc.includedBy.delete(this);
             inclChanges = true;
         }
@@ -149,7 +152,7 @@ export class AWKDocument {
      *  Sets inheritanceClosureOutdated in case there is a possible change.
      */
     close(connection: IConnection): boolean {
-        let inclChanges: boolean = this.clearIncludedBy();
+        const inclChanges: boolean = this.clearIncludedBy();
 
         connection.sendDiagnostics({
             uri: this.uri,
@@ -227,7 +230,7 @@ export class AWKDocument {
     // Marks last valid position after attribute (the comma or closing brace) when
     // it hasn't been closed by closing of lower paths yet.
     endPathFun(path: string[], position: Position): void {
-        let node = findPathPositionNode(this.positionTree, path);
+        const node = findPathPositionNode(this.positionTree, path);
 
         // debugLog("endPathFun " + path.join(".") + " " + String(node !== undefined));
         if (node !== undefined && node.end === undefined) {
@@ -237,17 +240,36 @@ export class AWKDocument {
 
     // Marks first valid position of an AV
     beginEmbeddingFun(path: string[], position: Position): void {
-        let node: PathPositionNode = createPathPositionNode(this.positionTree, path, position);
+        const node: PathPositionNode = createPathPositionNode(this.positionTree, path, position);
 
         node.avStart = position;
     }
 
     // Marks last valid position of an AV (before endPathFun).
     endEmbeddingFun(path: string[], position: Position): void {
-        let node = findPathPositionNode(this.positionTree, path);
+        const node = findPathPositionNode(this.positionTree, path);
 
         if (node !== undefined) {
             node.end = position;
         }
+    }
+
+    functionCallStack: SymbolUsage[] = [];
+    parameterUsage: ParameterUsage[] = [];
+
+    registerFunctionCall(start: boolean, position: Position): void {
+        if (start) {
+            this.functionCallStack.push(this.usedSymbols[this.usedSymbols.length - 1]);
+        } else {
+            const funcCallSym = this.functionCallStack.pop();
+            // Mark end of parameters
+            this.parameterUsage.push(new ParameterUsage(funcCallSym!, -1, position, start));
+        }
+    }
+
+    registerFunctionCallParameter(parameterIndex: number, start: boolean, line: number, position: number): void {
+        this.parameterUsage.push(new ParameterUsage(
+            this.functionCallStack[this.functionCallStack.length - 1],
+            parameterIndex, {line: line, character: position}, start));
     }
 }

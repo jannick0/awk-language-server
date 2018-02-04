@@ -12,7 +12,7 @@
 		"noImplicitThis": true,
 		"noUnusedParameters": false,
 		"strictNullChecks": true,
-		"noUnusedLocals": true
+		"noUnusedLocals": false
 	},
 	"exclude": [
 		"node_modules"

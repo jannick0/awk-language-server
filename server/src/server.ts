@@ -6,17 +6,19 @@ import {
     CompletionItemKind, Location, Range, Position, Definition, Hover,
     SymbolInformation, SymbolKind, ReferenceParams,
     WorkspaceSymbolParams, TextDocumentPositionParams, TextDocument,
-    DocumentSymbolParams, DidCloseTextDocumentParams
+    DocumentSymbolParams, DidCloseTextDocumentParams, SignatureHelp,
+    CancellationToken, SignatureInformation, ParameterInformation, ResponseError
 } from 'vscode-languageserver';
 
 import {
     parse, setFileBaseName, setDefineFun, setMessageFun, setUsageFun,
     setIncludeFun, updateStylisticWarnings, lastSymbolPos, builtInSymbols,
-    BuiltInFunction, functionParameters, AwkLanguageServerSettings
+    BuiltInFunction, functionParameters, AwkLanguageServerSettings,
+    setFunctionCallFun, setParameterFun
 } from "./awk";
 
 import  {
-    finishPositionTree
+    finishPositionTree, positionCompare
 } from './path';
 
 import {
@@ -30,7 +32,8 @@ import {
     getRange,
     getSymbolDefineType,
     isSymbolDefineType,
-    removeSymbolDefineType
+    removeSymbolDefineType,
+    ParameterUsage
 } from './symbols';
 
 import {
@@ -72,7 +75,7 @@ function addToEndOfProcessingQueue(doc: AWKDocument, text: string, type: Process
 
 function processNextQueueItem(): void {
     while (nrOpenReadRequests === 0 && processingAllowed && processingQueue.length !== 0) {
-        let queueItem: ProcessQueueItem = processingQueue.shift()!;
+        const queueItem: ProcessQueueItem = processingQueue.shift()!;
         // debugLog("process " + queueItem.doc.uri + " " + ProcessQueueItemType[queueItem.type]); // !!!
         switch (queueItem.type) {
           case ProcessQueueItemType.awk:
@@ -86,7 +89,7 @@ function processNextQueueItem(): void {
 }
 
 function sendDiagnostics(): void {
-    for (let doc of documentMap.values()) {
+    for (const doc of documentMap.values()) {
         doc.sendDiagnostics(connection, config.maxNumberOfProblems);
     }
 }
@@ -114,9 +117,9 @@ function setIncludePath(ip: string[]): boolean {
 
 // Triggers parsing of an include file, or reports that the file doesn't exist
 function addInclude(filename: string, relative: boolean, position: Position, length: number, includeSource: AWKDocument): void {
-    let inclFileNames: string[] = relative?
+    const inclFileNames: string[] = relative?
         makeRelativePathName(includeSource.uri, filename): makeAbsolutePathName(filename);
-    let inclFileName: string = inclFileNames.filter(function(fn: string): boolean {
+    const inclFileName: string = inclFileNames.filter(function(fn: string): boolean {
         return fileExists(fn);
     })[0];
 
@@ -129,13 +132,13 @@ function addInclude(filename: string, relative: boolean, position: Position, len
         });
         return;
     }
-	let inclURI: string = makeURI(inclFileName);
+	const inclURI: string = makeURI(inclFileName);
     if (documentMap.has(inclURI)) {
         // Already parsed
         return;
     }
 	// Prevent loading multiple times, possibly in a cycle
-    let newDoc: AWKDocument = new AWKDocument(inclURI);
+    const newDoc: AWKDocument = new AWKDocument(inclURI);
 	documentMap.set(inclURI, newDoc);
     updateInclude(includeSource, newDoc, getRange(position, length));
     // This will trigger a read once the current file has been parsed
@@ -168,11 +171,11 @@ function messageFun(type: string, subType: string, msg: string, position: Positi
 let documentMap: Map<string, AWKDocument> = new Map();
 
 function addSymbolDefinition(type: SymbolType, doc: AWKDocument, symbol: string, position: Position, docComment: string): void {
-    let symbolDefinition: SymbolDefinition = new SymbolDefinition(
+    const symbolDefinition: SymbolDefinition = new SymbolDefinition(
         doc, position, type, docComment, symbol, false);
 
     doc.addSymbolDefinition(symbol, symbolDefinition);
-    let defineType = getSymbolDefineType(type);
+    const defineType = getSymbolDefineType(type);
     if (defineType !== undefined) {
         addSymbolUsage(defineType, doc, symbol, position);
     }
@@ -180,13 +183,13 @@ function addSymbolDefinition(type: SymbolType, doc: AWKDocument, symbol: string,
 
 // Store symbol usage
 function addSymbolUsage(type: SymbolType, doc: AWKDocument, symbol: string, position: Position): void {
-    let usage = new SymbolUsage(symbol, type, position);
+    const usage = new SymbolUsage(symbol, type, position);
 
     if (type === SymbolType.globalVariable && !doc.isSymbolDefined(symbol, type)) {
         // In AWK, global variables can be introduced by naming them, so the first
         // occurence is stored as definition. Jumping to that definition
         // doesn't make sense, so its position is left undefined.
-        let symbolDefinition: SymbolDefinition = new SymbolDefinition(
+        const symbolDefinition: SymbolDefinition = new SymbolDefinition(
             doc, position, type, "", symbol, true);
         doc.addSymbolDefinition(symbol, symbolDefinition);
     }
@@ -194,7 +197,7 @@ function addSymbolUsage(type: SymbolType, doc: AWKDocument, symbol: string, posi
 }
 
 function updateInclude(includingDoc: AWKDocument, includedDoc: AWKDocument, range: Range): void {
-    let inclInfo = new IncludeDeclarationInfo(range);
+    const inclInfo = new IncludeDeclarationInfo(range);
 
     includingDoc.addIncludes(includedDoc, inclInfo);
     includedDoc.addIncludedBy(includingDoc, inclInfo);
@@ -205,7 +208,7 @@ function closeEmptyDocuments(): void {
 
     while (inclChanges) {
         inclChanges = false;
-        for (let [uri, doc] of documentMap) {
+        for (const [uri, doc] of documentMap) {
             if (!doc.isIncluded()) {
                 // debugLog("closing " + uri); // !!!
                 if (doc.close(connection)) {
@@ -252,7 +255,7 @@ function updateConfiguration(settings: UserPreferences|undefined): boolean {
           config.maxNumberOfProblems = settings.maxNumberOfProblems || 100;
         reparse = true;
     }
-    let gawkMode = settings.mode === undefined || settings.mode === "gawk";
+    const gawkMode = settings.mode === undefined || settings.mode === "gawk";
     if (config.gawk !== gawkMode) {
         config.gawk = gawkMode;
         reparse = true;
@@ -289,7 +292,7 @@ function updateConfiguration(settings: UserPreferences|undefined): boolean {
 // let count: number = 0; // debugging
 
 function validateTextDocument(doc: AWKDocument, text: string, openInEditor: boolean): void {
-    let baseName: string = doc.uri.replace(/^(.*\/)?([^\/]*)\..*$/, "$2");
+    const baseName: string = doc.uri.replace(/^(.*\/)?([^\/]*)\..*$/, "$2");
     
     // Set up handlers
     setFileBaseName(baseName.match(/Constants$/)? undefined: baseName);
@@ -306,6 +309,14 @@ function validateTextDocument(doc: AWKDocument, text: string, openInEditor: bool
     });
     setIncludeFun(function(filename: string, relative: boolean, line: number, position: number, length: number): void {
         addInclude(filename, relative, {line: line - 1, character: position - 1}, length, doc);
+    });
+    connection.console.log("========");
+    setFunctionCallFun(function(start: boolean, line: number, position: number): void {
+        doc.registerFunctionCall(start, {line: line - 1, character: position - 1});
+    });
+    setParameterFun(function(parameterIndex: number, start: boolean, line: number, position: number): void {
+        doc.registerFunctionCallParameter(parameterIndex, start, line - 1, position - 1);
+        connection.console.log(`param=${parameterIndex}, start=${start}, line=${line}, positions=${position}`);
     });
 
 	validateText(doc, text);
@@ -338,9 +349,9 @@ function validateText(doc: AWKDocument, text: string): void {
 }
 
 function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams): SymbolUsage|undefined {
-    let docURI = textDocumentPosition.textDocument.uri;
-    let doc = documentMap.get(docURI);
-    let pos = textDocumentPosition.position;
+    const docURI = textDocumentPosition.textDocument.uri;
+    const doc = documentMap.get(docURI);
+    const pos = textDocumentPosition.position;
 
     function binsearch(arr: SymbolUsage[], val: Position): SymbolUsage|undefined {
         let from: number = 0;
@@ -358,8 +369,8 @@ function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams)
             return undefined;
         }
         while (from < to) {
-            let i: number = Math.floor((to + from) / 2);
-            let res: number = compare(arr[i], val);
+            const i: number = Math.floor((to + from) / 2);
+            const res: number = compare(arr[i], val);
             if (res < 0) {
                 from = i + 1;
             } else if (res > 0) {
@@ -375,7 +386,7 @@ function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams)
         // connection.console.log(`cannot find position`);
         return undefined;
     } else {
-        let usage = binsearch(doc.usedSymbols, pos);
+        const usage = binsearch(doc.usedSymbols, pos);
         if (usage !== undefined && isSymbolDefineType(usage.type)) {
             // connection.console.log(`found define ${usage.symbol}`);
             return new SymbolUsage(usage.symbol, removeSymbolDefineType(usage.type),
@@ -385,6 +396,43 @@ function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams)
             return usage;
         }
     }
+}
+
+function findParameterUsage(doc: AWKDocument, textDocumentPosition: TextDocumentPositionParams): ParameterUsage|undefined {
+    const pos = textDocumentPosition.position;
+
+    // Returns index of first parameter usage that contains the current position
+    // Sorting is purely by start position
+    function binsearch(arr: ParameterUsage[], val: Position): number {
+        let from: number = 0;
+        let to: number = arr.length - 1;
+
+        if (from > to) {
+            return -1;
+        }
+        while (from < to) {
+            const i: number = Math.floor((to + from) / 2);
+            const res: number = positionCompare(arr[i].position, val);
+            if (res < 0) {
+                from = i + 1;
+            } else if (res > 0) {
+                to = i - 1;
+            } else {
+                // There can only be one parameter at one precise position
+                return i;
+            }
+        }
+        return positionCompare(arr[from].position, val) > 0? from - 1: from;
+    }
+
+    if (doc === undefined) {
+        return undefined;
+    }
+    const firstIndex = binsearch(doc.parameterUsage, pos);
+    if (firstIndex === -1) {
+        return undefined;
+    }
+    return doc.parameterUsage[firstIndex];
 }
 
 function builtInCompletions(textDocumentPosition: TextDocumentPositionParams): CompletionItem[] {
@@ -408,9 +456,9 @@ function builtInCompletions(textDocumentPosition: TextDocumentPositionParams): C
  */
 let docCommentStart = /^##[ \t]*/;
 function leftAlign(docComment: string): string {
-    let lines = docComment.split("\n");
-    let minLength = lines.map((line) => {
-        let matches = line.match(docCommentStart);
+    const lines = docComment.split("\n");
+    const minLength = lines.map((line) => {
+        const matches = line.match(docCommentStart);
         return matches === null? 2: matches[0].length;
     }).reduce((min: number, len: number) => len < min? len: min, 2);
 
@@ -422,17 +470,17 @@ function leftAlign(docComment: string): string {
 // Finds symbol to be completed and returns all symbols with a corresponding
 // definition.
 function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams): CompletionItem[] {
-    let compl = builtInCompletions(textDocumentPosition);
+    const compl = builtInCompletions(textDocumentPosition);
 
     let completions: Map<string, Set<string>> = new Map();
     documentMap.forEach(function(doc: AWKDocument): void {
         for (var type = 0; type < doc.definedSymbols.length; type++) {
-            let defMap = doc.definedSymbols[type];
+            const defMap = doc.definedSymbols[type];
             if (defMap !== undefined) {
                 defMap.forEach(function(definitions: SymbolDefinition[], symbol: string): void {
                     if (symbol !== undefined /*&& symbol.startsWith(usage!.symbol)*/) {
                         for (let i = 0; i < definitions.length; i++) {
-                            let def = definitions[i];
+                            const def = definitions[i];
                             if (!completions.has(symbol)) {
                                 completions.set(symbol, new Set());
                             }
@@ -481,8 +529,8 @@ function makeBuiltInHover(descr: BuiltInFunction): string {
 }
 
 function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hover {
-    let usage = findSymbolForPosition(textDocumentPosition);
-    let doc = documentMap.get(textDocumentPosition.textDocument.uri);
+    const usage = findSymbolForPosition(textDocumentPosition);
+    const doc = documentMap.get(textDocumentPosition.textDocument.uri);
 
 	if (doc === undefined || usage === undefined) {
         return { contents: [] };
@@ -503,11 +551,11 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
     }
     let hoverTexts: string[] = [];
     documentMap.forEach(function(doc: AWKDocument): void {
-        let defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage!.type];
+        const defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage!.type];
         if (defMap !== undefined && defMap.has(usage!.symbol)) {
-            let definitions = defMap.get(usage!.symbol)!;
+            const definitions = defMap.get(usage!.symbol)!;
             for (let i = 0; i < definitions.length; i++) {
-                let def = definitions[i];
+                const def = definitions[i];
                 let text: string|undefined;
                 switch (def.type) {
                   case SymbolType.globalVariable:
@@ -517,7 +565,7 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
                     text = "parameter/local variable";
                     break;
                   case SymbolType.func:
-                    let name = def.getSymbol();
+                    const name = def.getSymbol();
                     text = "function " + name + "(" + functionParameters[name].join(", ") + ")";
                     break;
                 }
@@ -544,35 +592,33 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
 }
 
 function awkDefinitionProvider(textDocumentPosition: TextDocumentPositionParams): Definition {
-    let usage = findSymbolForPosition(textDocumentPosition);
-    let doc = documentMap.get(textDocumentPosition.textDocument.uri);
+    const usage = findSymbolForPosition(textDocumentPosition);
+    const doc = documentMap.get(textDocumentPosition.textDocument.uri);
 
     if (doc === undefined || usage === undefined) {
         return [];
     }
-    let symbol: string = usage.symbol;
-    let definitionDistance: {definition: SymbolDefinition;}[] = [];
+    const symbol: string = usage.symbol;
+    let definitionDistance: SymbolDefinition[] = [];
     documentMap.forEach(function(doc: AWKDocument): void {
-        let defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage!.type];
-        if (defMap !== undefined && defMap.has(usage!.symbol)) {
-            let definitions = defMap.get(usage!.symbol)!;
+        const defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage!.type];
+        if (defMap !== undefined && defMap.has(symbol)) {
+            const definitions = defMap.get(symbol)!;
             for (let i = 0; i < definitions.length; i++) {
-                let def = definitions[i];
+                const def = definitions[i];
                 if (!def.isImplicitDefinition) {
-                    definitionDistance.push({definition: def});
+                    definitionDistance.push(def);
                 }
             }
         }
     });
-    return definitionDistance.map((distDef): Location => {
-                let def = distDef.definition;
-                return Location.create(def.document.uri,
-                                       getRange(def.position, symbol.length));
-            });
+    return definitionDistance.map((def): Location => 
+                Location.create(def.document.uri,
+                                getRange(def.position, symbol.length)));
 }
 
 function awkListAllSymbolsInFile(params: DocumentSymbolParams/*textDocumentIdentifier: TextDocumentIdentifier*/): SymbolInformation[] {
-    let doc = documentMap.get(params.textDocument.uri);
+    const doc = documentMap.get(params.textDocument.uri);
 
     if (doc === undefined) {
         return [];
@@ -581,7 +627,7 @@ function awkListAllSymbolsInFile(params: DocumentSymbolParams/*textDocumentIdent
     doc.definedSymbols.forEach(function(defMap: Map<string, SymbolDefinition[]>, type: SymbolType): void {
         defMap.forEach(function(defs: SymbolDefinition[], symbol: string): void {
             if (symbol !== undefined && defs !== undefined && defs.length > 0) {
-                let def: SymbolDefinition = defs[0];
+                const def: SymbolDefinition = defs[0];
                 if (removeSymbolDefineType(def.type) === SymbolType.func) {
                     si.push(SymbolInformation.create(symbol, SymbolKind.Function,
                                                     getRange(def.position, symbol.length)));
@@ -593,8 +639,8 @@ function awkListAllSymbolsInFile(params: DocumentSymbolParams/*textDocumentIdent
 }
 
 function awkReferenceProvider(rp: ReferenceParams): Location[] {
-    let includeDeclaration = rp.context.includeDeclaration;
-    let usage = findSymbolForPosition(rp);
+    const includeDeclaration = rp.context.includeDeclaration;
+    const usage = findSymbolForPosition(rp);
 
     if (usage === undefined) {
         return [];
@@ -602,9 +648,9 @@ function awkReferenceProvider(rp: ReferenceParams): Location[] {
     let locs: Location[] = [];
     if (includeDeclaration) {
         documentMap.forEach(function(doc: AWKDocument): void {
-            let defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage!.type];
+            const defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage!.type];
             if (defMap !== undefined && defMap.has(usage!.symbol)) {
-                let defs = defMap.get(usage!.symbol)!;
+                const defs = defMap.get(usage!.symbol)!;
                 for (let i = 0; i < defs.length; i++) {
                     locs.push(Location.create(doc.uri, defs[i].getRange()));
                 }
@@ -612,9 +658,9 @@ function awkReferenceProvider(rp: ReferenceParams): Location[] {
         });
     }
     documentMap.forEach(function(doc: AWKDocument): void {
-        let symbolUsage = doc.usedSymbols;
+        const symbolUsage = doc.usedSymbols;
         for (let i = 0; i < symbolUsage.length; i++) {
-            let docUsage = symbolUsage[i];
+            const docUsage = symbolUsage[i];
             if (docUsage.symbol === usage!.symbol &&
                   docUsage.type === usage!.type) {
                 locs.push(Location.create(doc.uri, docUsage.getRange()));
@@ -625,7 +671,7 @@ function awkReferenceProvider(rp: ReferenceParams): Location[] {
 }
 
 function awkWorkspaceSymbolProvider(ws: WorkspaceSymbolParams): SymbolInformation[] {
-    let query: string = ws.query;
+    const query: string = ws.query;
     let si: SymbolInformation[] = [];
 
     documentMap.forEach(function(doc: AWKDocument): void {
@@ -634,7 +680,7 @@ function awkWorkspaceSymbolProvider(ws: WorkspaceSymbolParams): SymbolInformatio
                 if (symbol !== undefined && symbol.startsWith(query)) {
                     if (definitions !== undefined) {
                         for (let i = 0; i < definitions.length; i++) {
-                            let def = definitions[i];
+                            const def = definitions[i];
                             if (removeSymbolDefineType(def.type) === SymbolType.func) {
                                 si.push(SymbolInformation.create(symbol, SymbolKind.Function,
                                                                  def.getRange(), doc.uri));
@@ -648,12 +694,102 @@ function awkWorkspaceSymbolProvider(ws: WorkspaceSymbolParams): SymbolInformatio
     return si;
 }
 
+function awkGetFunctionDefinition(usage: SymbolUsage): SymbolDefinition|undefined {
+    const symbol: string = usage.symbol;
+    let symbolDef: SymbolDefinition|undefined = undefined;
+
+    documentMap.forEach((doc: AWKDocument): void => {
+        const defMap: Map<string, SymbolDefinition[]> = doc.definedSymbols[usage.type];
+        if (symbolDef === undefined && defMap !== undefined && defMap.has(symbol)) {
+            const definitions = defMap.get(symbol)!;
+            for (let i = 0; i < definitions.length; i++) {
+                if (definitions[i].type === SymbolType.func) {
+                    symbolDef = definitions[i];
+                    break;
+                }
+            }
+        }
+    });
+    return symbolDef;
+}
+
+function awkSignatureHelper(textDocumentPosition: TextDocumentPositionParams, token: CancellationToken): SignatureHelp|ResponseError<void> {
+    var signatures: SignatureInformation[] = [];
+    const doc = documentMap.get(textDocumentPosition.textDocument.uri);
+
+    if (doc === undefined) {
+        return {
+            signatures: signatures,
+            activeSignature: null,
+            activeParameter: null
+        };
+    }
+    const paramUsage = findParameterUsage(doc, textDocumentPosition);
+
+    if (paramUsage === undefined || paramUsage.parameterIndex === -1) {
+        return {
+            signatures: signatures,
+            activeSignature: null,
+            activeParameter: null
+        };
+    }
+    const funcName = paramUsage.functionName.symbol;
+    const funcDef: SymbolDefinition|undefined = awkGetFunctionDefinition(paramUsage.functionName);
+    if (funcDef !== undefined) {
+        const parameters = funcName in functionParameters? functionParameters[funcName]: [];
+        signatures.push({
+            label: funcName + "(" + parameters.join(", ") + ")",
+            documentation: funcDef.docComment === ""? undefined: funcDef.docComment,
+            parameters: parameters.length === 0? [{label: "no parameters"}]:
+                        parameters.map(param => {
+                            return {
+                                label: param,
+                                documentation: param
+                            }
+                        })
+        });
+    } else {
+        const builtIn = builtInSymbols[funcName];
+        if (builtIn === undefined) {
+            // should return function definition
+            return {
+                signatures: [{
+                    label: "Undeclared function " + funcName,
+                    parameters: [{label: "unknown parameter"}]
+                }],
+                activeSignature: 0,
+                activeParameter: 0
+            };
+        }
+        signatures.push({
+            label: funcName + "(" +
+                (builtIn.parameters === undefined? "":
+                    builtIn.parameters.map((p: string, i: number): string =>
+                        builtIn.firstOptional !== undefined && i >= builtIn.firstOptional? p + "?": p
+                    ).join(", ")) + ")",
+            documentation: builtIn.description,
+            parameters: builtIn.parameters === undefined? [{label: "no parameters"}]:
+                        builtIn.parameters.map(param => {
+                            return {
+                                label: param,
+                                documentation: param
+                            }
+                    })
+        });
+    }
+    return {
+        signatures: signatures,
+        activeSignature: 0,
+        activeParameter: paramUsage.parameterIndex
+    };
+}
+
 // Fake reference for the source that includes open documents
 let editorURI: string = "editor://";
 let editorDocument: AWKDocument = new AWKDocument(editorURI);
 
 function closeDocURI(params: DidCloseTextDocumentParams): void {
-    let doc = documentMap.get(params.textDocument.uri);
+    const doc = documentMap.get(params.textDocument.uri);
 
     if (doc !== undefined) {
         doc.removeIncludedBy(editorDocument);
@@ -695,7 +831,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
             hoverProvider: true,
             documentSymbolProvider: true,
             referencesProvider: true,
-            workspaceSymbolProvider: true
+            workspaceSymbolProvider: true,
+            signatureHelpProvider : {
+                triggerCharacters: [ '(' ]
+            }
             // signatureHelpProvider?: SignatureHelpOptions;
             // documentHighlightProvider?: boolean;
             // codeActionProvider?: boolean;
@@ -712,10 +851,10 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent((change) => {
     let doc = documentMap.get(change.document.uri);
-    let type: ProcessQueueItemType = ProcessQueueItemType.awk;
+    const type: ProcessQueueItemType = ProcessQueueItemType.awk;
 
     if (doc === undefined) {
-        let inclDeclInfo = new IncludeDeclarationInfo({start: {line: 0, character: 0}, end: {line: 1, character: 0}});
+        const inclDeclInfo = new IncludeDeclarationInfo({start: {line: 0, character: 0}, end: {line: 1, character: 0}});
         doc = new AWKDocument(change.document.uri);
         doc.addIncludedBy(editorDocument, inclDeclInfo);
         documentMap.set(change.document.uri, doc);
@@ -733,12 +872,12 @@ connection.onDidChangeConfiguration((change) => {
     if (change === undefined) {
         return;
     }
-    let settings = <Settings> change.settings;
+    const settings = <Settings> change.settings;
     if (updateConfiguration(settings.awk)) {
         // Revalidate any open text documents immediately
         documents.all().forEach(function(document: TextDocument): void {
-            let doc = documentMap.get(document.uri);
-            let type: ProcessQueueItemType = ProcessQueueItemType.awk;
+            const doc = documentMap.get(document.uri);
+            const type: ProcessQueueItemType = ProcessQueueItemType.awk;
             if (doc !== undefined) {
                 addToEndOfProcessingQueue(doc, document.getText(), type, true);
             }
@@ -793,6 +932,8 @@ connection.onReferences(awkReferenceProvider);
 connection.onWorkspaceSymbol(awkWorkspaceSymbolProvider);
 
 connection.onDidCloseTextDocument(closeDocURI);
+
+connection.onSignatureHelp(awkSignatureHelper);
 
 // Listen on the connection
 connection.listen();

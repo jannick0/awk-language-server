@@ -45,12 +45,22 @@ export function setIncludeFun(fn: (file: string, relative: boolean, line: number
     includeFun = fn;
 }
 
+let parameterFun: (parameterIndex: number, start: boolean, line: number, position: number) => void;
+export function setParameterFun(fn: (parameterIndex: number, start: boolean, line: number, position: number) => void) {
+    parameterFun = fn;
+}
+
+let functionCallFun: (start: boolean, line: number, position: number) => void;
+export function setFunctionCallFun(fn: (start: boolean, line: number, position: number) => void) {
+    functionCallFun = fn;
+}
+
 function llerror(...args: any[]): void {
     messageFun("error", "syntax", sprintf(args), lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
 }
 
 function llwarn(warnType: string, ...args: any[]): void {
-    let msg = sprintf(args);
+    const msg = sprintf(args);
     messageFun("warning", warnType, msg, lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
 }
 
@@ -217,7 +227,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     gensub: {
         name: "gensub",
         parameters: ["regexp", " replacement", " how", " target"],
-        firstOptional: 4,
+        firstOptional: 3,
         description: "Search the target string target for matches of the regular expression regexp. If how is a string beginning with 'g' or 'G' (short for \"global\"), then replace all matches of regexp with replacement. Otherwise, how is treated as a number indicating which match of regexp to replace. If no target is supplied, use $0. It returns the modified string as the result of the function and the original target string is not changed. gensub() provides an additional feature that is not available in sub() or gsub(): the ability to specify components of a regexp in the replacement text. This is done by using parentheses in the regexp to mark the components and then specifying '\\N' in the replacement text, where N is a digit from 1 to 9",
         awk: false
     },
@@ -231,7 +241,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     gsub: {
         name: "gsub",
         parameters: ["regexp", " replacement", " target"],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Search target for all of the longest, leftmost, nonoverlapping matching substrings it can find and replace them with replacement. The 'g' in gsub() stands for \"global,\" which means replace everywhere. For example:",
         awk: true
     },
@@ -251,21 +261,21 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     match: {
         name: "match",
         parameters: ["string", " regexp", " array"],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Search string for the longest, leftmost substring matched by the regular expression regexp and return the character position (index) at which that substring begins (one, if it starts at the beginning of string). If no match is found, return zero.",
         awk: true
     },
     patsplit: {
         name: "patsplit",
         parameters: ["string", " array", " fieldpat", " seps"],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Divide string into pieces defined by fieldpat and store the pieces in array and the separator strings in the seps array. The first piece is stored in array[1], the second piece in array[2], and so forth. The third argument, fieldpat, is a regexp describing the fields in string (just as FPAT is a regexp describing the fields in input records). It may be either a regexp constant or a string. If fieldpat is omitted, the value of FPAT is used. patsplit() returns the number of elements created. seps[i] is the separator string between array[i] and array[i+1]. Any leading separator will be in seps[0].",
         awk: false
     },
     split: {
         name: "split",
         parameters: ["string", " array", " fieldsep", " seps"],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Divide string into pieces separated by fieldsep and store the pieces in array and the separator strings in the seps array. The first piece is stored in array[1], the second piece in array[2], and so forth. The string value of the third argument, fieldsep, is a regexp describing where to split string (much as FS can be a regexp describing where to split input records). If fieldsep is omitted, the value of FS is used. split() returns the number of elements created. seps is a gawk extension, with seps[i] being the separator string between array[i] and array[i+1]. If fieldsep is a single space, then any leading whitespace goes into seps[0] and any trailing whitespace goes into seps[n], where n is the return value of split() (i.e., the number of elements in array).",
         awk: true
     },
@@ -297,14 +307,14 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     sub: {
         name: "sub",
         parameters: ["regexp", " replacement", " target"],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Search target, which is treated as a string, for the leftmost, longest substring matched by the regular expression regexp. Modify the entire string by replacing the matched text with replacement. The modified string becomes the new value of target. Return the number of substitutions made (zero or one).",
         awk: true
     },
     substr: {
         name: "substr",
         parameters: ["string", " start", " length"],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Return a length-character-long substring of string, starting at character number start. The first character of a string is character number one.",
         awk: true
     },
@@ -323,7 +333,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     close: {
         name: "close",
         parameters: ["filename", " how"],
-        firstOptional: 2,
+        firstOptional: 1,
         description: "Close the file filename for input or output. Alternatively, the argument may be a shell command that was used for creating a coprocess, or for redirecting to or from a pipe; then the coprocess or pipe is closed. See Close Files And Pipes for more information.",
         awk: false
     },
@@ -368,7 +378,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     and: {
         name: "and",
         parameters: ["v1", " v2", " ..."],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Return the bitwise AND of the arguments. There must be at least two.",
         awk: false
     },
@@ -387,7 +397,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     or: {
         name: "or",
         parameters: ["v1", " v2", " ..."],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Return the bitwise OR of the arguments. There must be at least two.",
         awk: false
     },
@@ -400,7 +410,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     xor: {
         name: "xor",
         parameters: ["v1", " v2", " ..."],
-        firstOptional: 3,
+        firstOptional: 2,
         description: "Return the bitwise XOR of the arguments. There must be at least two. ",
         awk: false
     },
@@ -413,7 +423,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     bindtextdomain: {
         name: "bindtextdomain",
         parameters: ["directory", " domain"],
-        firstOptional: 2,
+        firstOptional: 1,
         description: "Set the directory in which gawk will look for message translation files, in case they will not or cannot be placed in the \"standard\" locations (e.g., during testing). It returns the directory in which domain is \"bound.\"",
         awk: false
     },
@@ -427,7 +437,7 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     dcngettext: {
         name: "dcngettext",
         parameters: ["string1", " string2", " number", " domain", " category"],
-        firstOptional: 4,
+        firstOptional: 3,
         description: "Return the plural form used for number of the translation of string1 and string2 in text domain domain for locale category category. string1 is the English singular variant of a message, and string2 is the English plural variant of the same message. The default value for domain is the current value of TEXTDOMAIN. The default value for category is \"LC_MESSAGES\".",
         awk: false
     },
@@ -776,7 +786,7 @@ assign_statement -> expr_list ExprTreeArray = { [] }:
     (logical_expression -> expr, { expr_list.push(expr); }) CHAIN (comma, nl_opt).
 
 logical_expression -> expr ExprTreeOrUndefined = { undefined }:
-    unary_logical_operator, { let op = lastSymbol; },
+    unary_logical_operator, { const op = lastSymbol; },
     logical_expression -> sub_expr, {
         expr = { head: op, type: "unary", operands: [sub_expr] };
     };
@@ -797,7 +807,7 @@ logical_expression -> expr ExprTreeOrUndefined = { undefined }:
 
 arithmetic_expression -> expr ExprTreeOrUndefined = { undefined }:
     /* Note: this parses -a, but also a - b via concatenation*/
-    unary_binary_operator, { let op = lastSymbol; },
+    unary_binary_operator, { const op = lastSymbol; },
     arithmetic_expression -> sub_expr, {
         expr = { head: op, type: "unary", operands: [sub_expr] };
     };
@@ -826,8 +836,8 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
     };
     number, { expr = { head: lastSymbol, type: "number" } };
     string, { expr = { head: lastSymbol, type: "string" } };
-    field -> fld_expr, { expr = fld_expr }, SHIFT (
-        assign, { let assign_op = lastSymbol; },
+    field -> expr, SHIFT (
+        assign, { const assign_op = lastSymbol; },
         logical_expression -> lvalue, {
             expr = { head: assign_op, type: "assign", operands: [expr, lvalue] };
         }
@@ -841,9 +851,10 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
         }
     }) OPTION,
     function_call_identifier, {
-        let funcId = lastSymbol.slice(0, -1);
+        const funcId = lastSymbol.slice(0, -1);
         if (!indirection) {
             usageFun(SymbolType.func, funcId, lastSymbolPos.line, lastSymbolPos.position);
+            functionCallFun(true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
         } else {
             variableUsage(funcId);
         }
@@ -852,8 +863,11 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
                        lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }
     },
-    actual_parameters -> parameters, {
+    actual_parameters(!indirection) -> parameters, {
         expr = { head: funcId, type: "call", operands: parameters };
+        if (!indirection) {
+            functionCallFun(false, lastSymbolPos.line, lastSymbolPos.position);
+        }
     };
     { let pre_increment: string|undefined = undefined; },
     (increment, { pre_increment = lastSymbol; }) OPTION,
@@ -871,7 +885,7 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
         }
     }, (
         SHIFT increment, { expr = { head: lastSymbol, type: "post", operands: [expr] }; }; /* This is ambiguous, just like in C: i+++++i */
-        assign, { let assign_op = lastSymbol; },
+        assign, { const assign_op = lastSymbol; },
         logical_expression -> lvalue, {
             expr = { head: assign_op, type: "assign", operands: [expr, lvalue] };
         };
@@ -892,11 +906,28 @@ array_index -> index ExprTreeOrUndefined = { undefined }:
                 { head: "join", type: "call", operands: indices };
     }.
 
-actual_parameters -> parameters ExprTreeArray = { [] }:
-    (
-        (logical_expression -> parameter, { parameters.push(parameter); }) CHAIN
-        (comma, nl_opt)
-    ) OPTION,
+actual_parameters(registerParameters boolean) -> parameters ExprTreeArray = { [] }:
+    (   (   {
+                if (registerParameters) {
+                    parameterFun(parameters.length, true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
+                }
+            },
+            logical_expression -> parameter, {
+                if (registerParameters) {
+                    parameterFun(parameters.length, false, llLineNumber, llLinePosition);
+                }
+                parameters.push(parameter);
+            }
+        ) CHAIN (
+            comma, nl_opt
+        );
+        {
+            if (registerParameters) {
+                parameterFun(0, true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
+                parameterFun(0, false, llLineNumber, llLinePosition);
+            }
+        }
+    ),
     right_parenthesis.
 
 delete_statement:

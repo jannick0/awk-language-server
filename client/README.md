@@ -1,0 +1,1 @@
+The client for the Visual Studio language server. It's a copy of the sample code with minor modifications.

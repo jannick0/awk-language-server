@@ -3,7 +3,7 @@
 	"description": "VSCode part of the awk language server",
 	"author": "TGV",
 	"license": "CC-BY-ND-4.0",
-	"version": "0.0.2",
+	"version": "0.1.0",
 	"publisher": "TGV",
 	"engines": {
 		"vscode": "^1.16.0"

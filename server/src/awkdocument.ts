@@ -1,3 +1,7 @@
+/*
+ * Document administration. See @AWKDocument.
+ */
+
 import {
     EMap, Equal
 } from './util';
@@ -83,7 +87,7 @@ export class AWKDocument {
         this.includes = new EMap<AWKDocument, IncludeDeclarationInfo>();
     }
 
-    addSymbolDefinition(symbol: string, symbolDefinition: SymbolDefinition): void {
+    addSymbolDefinition(symbol: string, symbolDefinition: SymbolDefinition): SymbolDefinition {
         let map = this.definedSymbols[symbolDefinition.type];
 
         if (map === undefined) {
@@ -93,6 +97,13 @@ export class AWKDocument {
             map.set(symbol, []);
         }
         map.get(symbol)!.push(symbolDefinition);
+        return symbolDefinition;
+    }
+
+    getSymbolDefinitions(symbol: string, type: SymbolType): SymbolDefinition[]|undefined {
+        const map = this.definedSymbols[type];
+
+        return map === undefined? undefined: map.get(symbol);
     }
 
     isSymbolDefined(symbol: string, type: SymbolType): boolean {

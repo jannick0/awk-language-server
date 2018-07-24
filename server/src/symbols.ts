@@ -26,9 +26,11 @@ export enum SymbolType {
     func,
     globalVariable,
     localVariable,
+    parameter,
     defineFunc,
     defineGlobalVariable,
-    defineLocalVariable
+    defineLocalVariable,
+    defineParameter
 }
 
 export function getSymbolDefineType(t: SymbolType): SymbolType {
@@ -36,6 +38,7 @@ export function getSymbolDefineType(t: SymbolType): SymbolType {
       case SymbolType.func: return SymbolType.defineFunc;
       case SymbolType.localVariable: return SymbolType.defineLocalVariable;
       case SymbolType.globalVariable: return SymbolType.defineGlobalVariable;
+      case SymbolType.parameter: return SymbolType.defineParameter;
     }
     return t;
 }
@@ -44,7 +47,7 @@ export function removeSymbolDefineType(t: SymbolType): SymbolType {
     switch (t) {
       case SymbolType.defineFunc: return SymbolType.func;
       case SymbolType.defineLocalVariable: return SymbolType.localVariable;
-      case SymbolType.defineGlobalVariable: return SymbolType.globalVariable;
+      case SymbolType.defineParameter: return SymbolType.parameter;
     }
     return t;
 }
@@ -56,22 +59,22 @@ export function isSymbolDefineType(t: SymbolType): boolean {
 /** Information about the definition of a symbol
 */
 export class SymbolDefinition implements Equal {
-    /** the symbol itself; when undefined, it represents screenArea */
-    private symbol: string;
-
-    parameterList: SymbolDefinition[];
+    parameters: SymbolDefinition[];
+    localVariables: SymbolDefinition[];
 
     constructor(
-        /// file in which it is defined
+        /** file in which it is defined */
         public document: AWKDocument,
-        /// symbol position start
+        /** symbol position start */
         public position: Position,
         public type: SymbolType,
         public docComment: string,
-        symbol: string,
+        /** the scope in which this symbol is defined; in AWK, it's a function or undefined for global */
+        public scope: SymbolDefinition|undefined,
+        /** the symbol itself */
+        public symbol: string,
         public isImplicitDefinition: boolean
     ) {
-        this.symbol = symbol;
     }
 
     getRange(): Range {
@@ -84,9 +87,6 @@ export class SymbolDefinition implements Equal {
             this.docComment === p.docComment;
     }
 
-    getSymbol(): string {
-        return this.symbol;
-    }
 }
 
 /** Information about a single symbol usage occurrence in a file

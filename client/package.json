@@ -9,11 +9,16 @@
 		"vscode": "^1.16.0"
 	},
 	"categories": [
-		"Languages"
+		"Programming Languages"
 	],
 	"activationEvents": [
 		"onLanguage:awk"
 	],
+	"homepage": "https://github.com/theovosse/awk-language-server/README.md",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/theovosse/awk-language-server.git"
+	},
 	"main": "./out/src/extension",
 	"contributes": {
 		"configuration": {

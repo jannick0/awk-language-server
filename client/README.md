@@ -20,5 +20,8 @@ Implements a number of VSCode's language server functions for awk files: syntax 
 
 ## Peculiarities:
 
-Comments with a double hash (\#\#) before a function declaration are considered
+- Comments with a double hash (\#\#) before a function declaration are considered
 doc-comments, and are shown in the hover text.
+
+- Using more than one space before a parameter in the function declaration makes it a local variable. Function call checking will follow
+.

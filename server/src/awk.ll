@@ -1,37 +1,40 @@
 #!llerror
+#ignorebuffer
 
-/* Generate by: ~/work/llgen/llgen +ts -main -llerror awk.ll */
+/* LL(1) parser for awk and gawk.
+   Syntax errors and symbol definition and usage are passed on to server.ts via
+   functions that should be set before calling the parser. There's a bit of
+   trickery involved in accepting newline as a statement separator, but note
+   that the structure doesn't need to be correct, as long as the language is the
+   same as accepted by (g)awk.
 
-/*
-Error:
-
-- From ircbot.awk
-    do {
-    } while (/^$/)
-    ...
-    if (/^:/) {
-    }
-
+   Generate by: ~/work/llgen/llgen +ts -main -llerror awk.ll
 */
 
 {
 
 import {
-    SymbolType
+    Position
+} from 'vscode-languageserver';
+
+import {
+    SymbolType, SymbolDefinition
 } from './symbols';
+
+// Interface to server.ts
 
 let fileBaseName: string;
 export function setFileBaseName(fn: string|undefined) {
     fileBaseName = fn === undefined? "unknown": fn;
 }
 
-let defineFun: (type: SymbolType, lastSymbol: string, llLineNumber: number, llLinePosition: number, docComment: string|undefined) => void;
-export function setDefineFun(fn: (type: SymbolType, lastSymbol: string, llLineNumber: number, llLinePosition: number, docComment: string|undefined) => void) {
+let defineFun: (type: SymbolType, scope: SymbolDefinition|undefined, lastSymbol: string, llLineNumber: number, llLinePosition: number, docComment: string|undefined) => SymbolDefinition;
+export function setDefineFun(fn: (type: SymbolType, scope: SymbolDefinition|undefined, lastSymbol: string, llLineNumber: number, llLinePosition: number, docComment: string|undefined) => SymbolDefinition) {
     defineFun = fn;
 }
 
-let usageFun: (type: SymbolType, lastSymbol: string, llLineNumber: number, llLinePosition: number) => void;
-export function setUsageFun(fn: (type: SymbolType, lastSymbol: string, llLineNumber: number, llLinePosition: number) => void) {
+let usageFun: (type: SymbolType, scope: SymbolDefinition|undefined, lastSymbol: string, llLineNumber: number, llLinePosition: number) => void;
+export function setUsageFun(fn: (type: SymbolType, scope: SymbolDefinition|undefined, lastSymbol: string, llLineNumber: number, llLinePosition: number) => void) {
     usageFun = fn;
 }
 
@@ -55,6 +58,8 @@ export function setFunctionCallFun(fn: (start: boolean, line: number, position: 
     functionCallFun = fn;
 }
 
+// Functions to report errors and warnings
+
 function llerror(...args: any[]): void {
     messageFun("error", "syntax", sprintf(args), lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
 }
@@ -63,6 +68,8 @@ function llwarn(warnType: string, ...args: any[]): void {
     const msg = sprintf(args);
     messageFun("warning", warnType, msg, lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
 }
+
+// Preferences/Settings
 
 export interface AwkLanguageServerSettings {
     /** Maximum size of list sent back */
@@ -97,6 +104,9 @@ export function updateStylisticWarnings(config: AwkLanguageServerSettings): void
     }
 }
 
+/**
+ * n-ary tree for expressions
+ */
 class ExprTree {
     head: string|undefined;
     type: string;
@@ -115,37 +125,89 @@ function for_in_expr(expr: ExprTree): boolean {
            expr.operands[0]!.type === "identifier";
 }
 
-let globalFunctionName: string = "global";
-let localVariables: {[name:string]: boolean} = {};
-export let functionParameters: {[functionName: string]: string[]} = {};
+/**
+ * Name of current function
+ */
+let globalFunctionName: SymbolDefinition|undefined = undefined;
+/**
+ * Maps variables defined in the function specification to `true` for parameters
+ * and `false` for "local variables".
+ */
+let globalFunctionParameters: {[name:string]: boolean} = {};
 
+/**
+ * Sets up environment when a new function is parsed
+ */
 function enterFunction(fn: string): void {
-    globalFunctionName = fn;
-    defineFun(SymbolType.func, fn, lastSymbolPos.line, lastSymbolPos.position, docComment);
+    globalFunctionName = defineFun(SymbolType.func, undefined, fn, lastSymbolPos.line, lastSymbolPos.position, docComment);
+    globalFunctionName.parameters = [];
+    globalFunctionName.localVariables = [];
     docComment = undefined;
-    functionParameters[fn] = [];
 }
 
-function addParameter(parameter: string): void {
-    defineFun(SymbolType.localVariable, globalFunctionName + "." + parameter, lastSymbolPos.line, lastSymbolPos.position, docComment);
-    localVariables[parameter] = true;
-    docComment = undefined;
-    functionParameters[globalFunctionName].push(parameter);
-}
-
-function exitFunction(): void {
-    globalFunctionName = "global";
-    localVariables = {};
-}
-
-function variableUsage(variable: string): void {
-    if (variable in localVariables) {
-        usageFun(SymbolType.localVariable, globalFunctionName + "." + variable, lastSymbolPos.line, lastSymbolPos.position);
-    } else {
-        usageFun(SymbolType.globalVariable, variable, lastSymbolPos.line, lastSymbolPos.position);
+/**
+ * Define function parameter as parameter or "local variable"
+ */
+function addParameter(parameter: string, isParameter: boolean): void {
+    if (globalFunctionName !== undefined) {
+        const paramDef = defineFun(isParameter? SymbolType.parameter: SymbolType.localVariable,
+            globalFunctionName, parameter, lastSymbolPos.line, lastSymbolPos.position, docComment);
+        globalFunctionParameters[parameter] = isParameter;
+        docComment = undefined;
+        if (isParameter) {
+            globalFunctionName.parameters.push(paramDef);
+        } else {
+            globalFunctionName.localVariables.push(paramDef);
+        }
     }
 }
 
+export interface FunctionBlock {
+    functionSymbol: SymbolDefinition|undefined;
+    start: Position;
+    end?: Position;
+};
+export let functionBlocks: FunctionBlock[] = [];
+
+/**
+ * Marks start of function blovk
+ */
+function enterFunctionBlock(): void {
+    functionBlocks.push({
+        functionSymbol: globalFunctionName,
+        start: {line: lastSymbolPos.line - 1, character: lastSymbolPos.position - 1 },
+        end: {line: lastSymbolPos.line - 1, character: lastSymbolPos.position - 1 },
+    });
+}
+
+/**
+ * Clears environment for parsing functions
+ */
+function exitFunction(): void {
+    const cFun = functionBlocks[functionBlocks.length - 1];
+
+    if (cFun !== undefined) {
+        cFun.end = {line: lastSymbolPos.line - 1, character: lastSymbolPos.position - 1 };
+    }
+    globalFunctionName = undefined;
+    globalFunctionParameters = {};
+}
+
+/**
+ * Registers variable usage
+ */
+function variableUsage(variable: string): void {
+    if (variable in globalFunctionParameters && globalFunctionName !== undefined) {
+        usageFun(globalFunctionParameters[variable]? SymbolType.parameter: SymbolType.localVariable,
+                 globalFunctionName, variable, lastSymbolPos.line, lastSymbolPos.position);
+    } else {
+        usageFun(SymbolType.globalVariable, undefined, variable, lastSymbolPos.line, lastSymbolPos.position);
+    }
+}
+
+/**
+ * Description of built-in functions and variables for hover
+ */
 export interface BuiltInFunction {
     name: string;
     parameters?: string[];
@@ -154,6 +216,10 @@ export interface BuiltInFunction {
     awk: boolean;
     description: string;
 }
+
+/**
+ * All known built-in functions and variables
+ */
 export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     atan2: {
         name: "atan2",
@@ -593,6 +659,10 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
     }
 }
 
+function init(): void {
+    functionBlocks = [];
+}
+
 }
 /* This property is needed to allow the scanner to decide between a division
    and a regular expression.
@@ -649,12 +719,17 @@ regexp_operator = "!?~".
 unary_binary_operator = "-".
 unary_logical_operator = "!".
 doc_comment = "##.*".
+/* terminal symbol for line-end; this is a statement terminator in modern awk */
 nl = "[\r\n]+".
+/* spaces and tabs are ignored. */
 IGNORE "[ \t]+".
+/* comment is ignored. */
 IGNORE "#.*".
+/* A backslash followed by a line-end is ignored. */
 IGNORE "\\(\r\n?|\n\r?)".
 
 awk_file:
+    { init(); },
     (
         doc_comment, {
             docComment = docComment === undefined? lastSymbol: docComment + "\n" + lastSymbol;
@@ -686,6 +761,7 @@ include_line:
         }
     }.
 
+/* This is pattern or expression + code, e.g. /^a/ { print $0; } */
 line_block:
     logical_expression OPTION, /* Can include regexps, BEGIN, etc */
     block(true).
@@ -709,16 +785,28 @@ function_definition:
         }
     },
     formal_parameters,
-    nl_opt,
+    nl_opt, {
+        enterFunctionBlock();
+    },
     block(false), {
-        exitFunction()
+        exitFunction();
     }.
 
+/* When a parameter is preceded by more than one space, it's supposed to be
+   the start of the local variable list (a formatting convention commonly used
+   to circumvent awk's lack of local variables)
+ */
 formal_parameters:
+    { let isParameter: boolean = true; },
     (
         (
+            {
+                if (ignoreBuffer.length > 2 || (ignoreBuffer.length === 1 && ignoreBuffer.charAt(0) !== " ")) {
+                    isParameter = false;
+                }
+            },
             identifier, {
-                addParameter(lastSymbol);
+                addParameter(lastSymbol, isParameter);
             }
         ) CHAIN (comma, nl_opt)
     ) OPTION,
@@ -853,7 +941,7 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
     function_call_identifier, {
         const funcId = lastSymbol.slice(0, -1);
         if (!indirection) {
-            usageFun(SymbolType.func, funcId, lastSymbolPos.line, lastSymbolPos.position);
+            usageFun(SymbolType.func, undefined, funcId, lastSymbolPos.line, lastSymbolPos.position);
             functionCallFun(true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
         } else {
             variableUsage(funcId);
@@ -923,8 +1011,8 @@ actual_parameters(registerParameters boolean) -> parameters ExprTreeArray = { []
         );
         {
             if (registerParameters) {
-                parameterFun(0, true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
-                parameterFun(0, false, llLineNumber, llLinePosition);
+                parameterFun(-1, true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
+                parameterFun(-1, false, llLineNumber, llLinePosition);
             }
         }
     ),
@@ -940,10 +1028,10 @@ delete_statement:
 print_statement:
     (
         print_sym, {
-            usageFun(SymbolType.func, "print", lastSymbolPos.line, lastSymbolPos.position);
+            usageFun(SymbolType.func, undefined, "print", lastSymbolPos.line, lastSymbolPos.position);
         };
         printf_sym, {
-            usageFun(SymbolType.func, "printf", lastSymbolPos.line, lastSymbolPos.position);
+            usageFun(SymbolType.func, undefined, "printf", lastSymbolPos.line, lastSymbolPos.position);
             if (stylisticWarnings.gawkCompatibility) {
                 messageFun("error", "mode", "only available in gawk",
                         lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
@@ -1046,6 +1134,6 @@ return_statement(is_line_block boolean):
 
 exit_statement(is_line_block boolean):
     exit_sym, {
-        usageFun(SymbolType.func, "exit", lastSymbolPos.line, lastSymbolPos.position);
+        usageFun(SymbolType.func, undefined, "exit", lastSymbolPos.line, lastSymbolPos.position);
     },
     SHIFT logical_expression OPTION.

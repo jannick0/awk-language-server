@@ -1,5 +1,12 @@
 'use strict';
 
+/**
+ * AWK Language Server for Visual Studio Code.
+ * 
+ * This module handles the interaction between the parser and document
+ * administration and VSCode. Code based on VSCode examples.
+ */
+
 import {
     IPCMessageReader, IPCMessageWriter, createConnection, IConnection, TextDocuments,
     DiagnosticSeverity, InitializeParams, InitializeResult, CompletionItem,
@@ -13,8 +20,8 @@ import {
 import {
     parse, setFileBaseName, setDefineFun, setMessageFun, setUsageFun,
     setIncludeFun, updateStylisticWarnings, lastSymbolPos, builtInSymbols,
-    BuiltInFunction, functionParameters, AwkLanguageServerSettings,
-    setFunctionCallFun, setParameterFun
+    BuiltInFunction, AwkLanguageServerSettings, setFunctionCallFun,
+    setParameterFun, functionBlocks, FunctionBlock
 } from "./awk";
 
 import  {
@@ -68,7 +75,6 @@ let processingAllowed: boolean = true;
 let processingQueue: ProcessQueueItem[] = [];
 
 function addToEndOfProcessingQueue(doc: AWKDocument, text: string, type: ProcessQueueItemType, openInEditor: boolean): void {
-    // debugLog("add to end of queue " + doc.getShortName() + " " + ProcessQueueItemType[type]); // !!!
     processingQueue.push({doc: doc, text: text, type: type, openInEditor: openInEditor});
     processNextQueueItem();
 }
@@ -76,7 +82,6 @@ function addToEndOfProcessingQueue(doc: AWKDocument, text: string, type: Process
 function processNextQueueItem(): void {
     while (nrOpenReadRequests === 0 && processingAllowed && processingQueue.length !== 0) {
         const queueItem: ProcessQueueItem = processingQueue.shift()!;
-        // debugLog("process " + queueItem.doc.uri + " " + ProcessQueueItemType[queueItem.type]); // !!!
         switch (queueItem.type) {
           case ProcessQueueItemType.awk:
             validateTextDocument(queueItem.doc, queueItem.text, queueItem.openInEditor);
@@ -111,7 +116,6 @@ function setIncludePath(ip: string[]): boolean {
         return false;
     }
     includePath = ip;
-    // connection.console.log(`awkpath = ${includePath.join(":")}`);
     return true;
 }
 
@@ -151,7 +155,8 @@ function addInclude(filename: string, relative: boolean, position: Position, len
     });
 }
 
-// Adds a message; ignores specific warnings
+// Can be called to add an error or warning message for the document;
+// ignores specific warnings
 function messageFun(type: string, subType: string, msg: string, position: Position, length: number, doc: AWKDocument): void {
     function ignoreThisMessage(): boolean {
         return type === "warning" &&
@@ -170,15 +175,16 @@ function messageFun(type: string, subType: string, msg: string, position: Positi
 /** Maps docURI -> AWKDocument */
 let documentMap: Map<string, AWKDocument> = new Map();
 
-function addSymbolDefinition(type: SymbolType, doc: AWKDocument, symbol: string, position: Position, docComment: string): void {
+function addSymbolDefinition(type: SymbolType, doc: AWKDocument, scope: SymbolDefinition|undefined, symbol: string, position: Position, docComment: string): SymbolDefinition {
     const symbolDefinition: SymbolDefinition = new SymbolDefinition(
-        doc, position, type, docComment, symbol, false);
-
-    doc.addSymbolDefinition(symbol, symbolDefinition);
+        doc, position, type, docComment, scope, symbol, false);
+    const def = doc.addSymbolDefinition(symbol, symbolDefinition);
     const defineType = getSymbolDefineType(type);
+
     if (defineType !== undefined) {
         addSymbolUsage(defineType, doc, symbol, position);
     }
+    return def;
 }
 
 // Store symbol usage
@@ -190,7 +196,7 @@ function addSymbolUsage(type: SymbolType, doc: AWKDocument, symbol: string, posi
         // occurence is stored as definition. Jumping to that definition
         // doesn't make sense, so its position is left undefined.
         const symbolDefinition: SymbolDefinition = new SymbolDefinition(
-            doc, position, type, "", symbol, true);
+            doc, position, type, "", undefined, symbol, true);
         doc.addSymbolDefinition(symbol, symbolDefinition);
     }
     doc.addSymbolUsage(usage);
@@ -296,10 +302,10 @@ function validateTextDocument(doc: AWKDocument, text: string, openInEditor: bool
     
     // Set up handlers
     setFileBaseName(baseName.match(/Constants$/)? undefined: baseName);
-    setDefineFun(function(type: SymbolType, symbol: string, line: number, position: number, docComment: string): void {
-        addSymbolDefinition(type, doc, symbol, {line: line - 1, character: position - 1}, docComment);
+    setDefineFun(function(type: SymbolType, scope: SymbolDefinition|undefined, symbol: string, line: number, position: number, docComment: string): SymbolDefinition {
+        return addSymbolDefinition(type, doc, scope, symbol, {line: line - 1, character: position - 1}, docComment);
     });
-    setUsageFun(function(type: SymbolType, symbol: string, line: number, position: number): void {
+    setUsageFun(function(type: SymbolType, scope: SymbolDefinition|undefined, symbol: string, line: number, position: number): void {
         // connection.console.log(`message ${type} ${inherit} ${symbol}`); // !!!
         addSymbolUsage(type, doc, symbol, {line: line - 1, character: position - 1});
     });
@@ -310,13 +316,13 @@ function validateTextDocument(doc: AWKDocument, text: string, openInEditor: bool
     setIncludeFun(function(filename: string, relative: boolean, line: number, position: number, length: number): void {
         addInclude(filename, relative, {line: line - 1, character: position - 1}, length, doc);
     });
-    connection.console.log("========");
+    // connection.console.log("========");
     setFunctionCallFun(function(start: boolean, line: number, position: number): void {
         doc.registerFunctionCall(start, {line: line - 1, character: position - 1});
     });
     setParameterFun(function(parameterIndex: number, start: boolean, line: number, position: number): void {
         doc.registerFunctionCallParameter(parameterIndex, start, line - 1, position - 1);
-        connection.console.log(`param=${parameterIndex}, start=${start}, line=${line}, positions=${position}`);
+        // connection.console.log(`param=${parameterIndex}, start=${start}, line=${line}, positions=${position}`);
     });
 
 	validateText(doc, text);
@@ -348,51 +354,75 @@ function validateText(doc: AWKDocument, text: string): void {
 	parseLevel--;
 }
 
+// Returns exact match in sorted array, or undefined
+function binsearch<A, B>(arr: A[], compareToTarget: (a: A) => number): A|undefined {
+    let from: number = 0;
+    let to: number = arr.length - 1;
+
+    if (from > to) {
+        return undefined;
+    }
+    while (from < to) {
+        const i: number = Math.floor((to + from) / 2);
+        const res: number = compareToTarget(arr[i]);
+        if (res < 0) {
+            from = i + 1;
+        } else if (res > 0) {
+            to = i - 1;
+        } else {
+            return arr[i];
+        }
+    }
+    return compareToTarget(arr[from]) === 0? arr[from]: undefined;
+}
+
+// Returns index of parameter usage that is <= target in a sorted array; this
+// can be outside the array when the target lies before the first entry or after
+// the last.
+function binsearchIndex<A, B>(arr: A[], compareToTarget: (a: A) => number): number {
+    let from: number = 0;
+    let to: number = arr.length - 1;
+
+    if (from > to) {
+        return -1;
+    }
+    while (from < to) {
+        const i: number = Math.floor((to + from) / 2);
+        const res: number = compareToTarget(arr[i]);
+        if (res < 0) {
+            from = i + 1;
+        } else if (res > 0) {
+            to = i - 1;
+        } else {
+            // There can only be one parameter at one precise position
+            return i;
+        }
+    }
+    return compareToTarget(arr[from]) > 0? from - 1: from;
+}
+
 function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams): SymbolUsage|undefined {
     const docURI = textDocumentPosition.textDocument.uri;
     const doc = documentMap.get(docURI);
     const pos = textDocumentPosition.position;
 
-    function binsearch(arr: SymbolUsage[], val: Position): SymbolUsage|undefined {
-        let from: number = 0;
-        let to: number = arr.length - 1;
-
-        function compare(a: SymbolUsage, b: Position): number {
-            return a.position.line !== b.line? a.position.line - b.line:
-                   b.character == a.position.character && a.symbol.length === 0? 0:
-                   b.character > a.position.character + a.symbol.length? -1:
-                   b.character < a.position.character? 1:
-                   0;
-        }
-
-        if (from > to) {
-            return undefined;
-        }
-        while (from < to) {
-            const i: number = Math.floor((to + from) / 2);
-            const res: number = compare(arr[i], val);
-            if (res < 0) {
-                from = i + 1;
-            } else if (res > 0) {
-                to = i - 1;
-            } else {
-                return arr[i];
-            }
-        }
-        return compare(arr[from], val) === 0? arr[from]: undefined;
+    function compareToPos(a: SymbolUsage): number {
+        return a.position.line !== pos.line? a.position.line - pos.line:
+                pos.character == a.position.character && a.symbol.length === 0? 0:
+                pos.character > a.position.character + a.symbol.length? -1:
+                pos.character < a.position.character? 1:
+                0;
     }
 
     if (doc === undefined) {
         // connection.console.log(`cannot find position`);
         return undefined;
     } else {
-        const usage = binsearch(doc.usedSymbols, pos);
+        const usage = binsearch(doc.usedSymbols, compareToPos);
         if (usage !== undefined && isSymbolDefineType(usage.type)) {
-            // connection.console.log(`found define ${usage.symbol}`);
             return new SymbolUsage(usage.symbol, removeSymbolDefineType(usage.type),
                                    usage.position);
         } else {
-            // connection.console.log(`found usage ${usage === undefined? "<none>": usage.symbol}`);
             return usage;
         }
     }
@@ -401,36 +431,17 @@ function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams)
 function findParameterUsage(doc: AWKDocument, textDocumentPosition: TextDocumentPositionParams): ParameterUsage|undefined {
     const pos = textDocumentPosition.position;
 
-    // Returns index of first parameter usage that contains the current position
-    // Sorting is purely by start position
-    function binsearch(arr: ParameterUsage[], val: Position): number {
-        let from: number = 0;
-        let to: number = arr.length - 1;
-
-        if (from > to) {
-            return -1;
-        }
-        while (from < to) {
-            const i: number = Math.floor((to + from) / 2);
-            const res: number = positionCompare(arr[i].position, val);
-            if (res < 0) {
-                from = i + 1;
-            } else if (res > 0) {
-                to = i - 1;
-            } else {
-                // There can only be one parameter at one precise position
-                return i;
-            }
-        }
-        return positionCompare(arr[from].position, val) > 0? from - 1: from;
-    }
-
     if (doc === undefined) {
         return undefined;
     }
-    const firstIndex = binsearch(doc.parameterUsage, pos);
+    let firstIndex = binsearchIndex(doc.parameterUsage, (a) => positionCompare(a.position, pos));
     if (firstIndex === -1) {
         return undefined;
+    }
+    while (firstIndex > 0 &&
+           positionCompare(doc.parameterUsage[firstIndex].position,
+                           doc.parameterUsage[firstIndex - 1].position) === 0) {
+        firstIndex--;
     }
     return doc.parameterUsage[firstIndex];
 }
@@ -448,13 +459,14 @@ function builtInCompletions(textDocumentPosition: TextDocumentPositionParams): C
     });
 }
 
+const docCommentStart = /^##[ \t]*/;
+
 /**
- * Strips the leading comment symbols and spaces from dc
+ * Strips the leading comment symbols and spaces from `docComment`
  * 
- * @param {string} dc 
- * @returns {string} 
+ * @param {string} docComment the docComment string
+ * @returns {string} comment without the extra indentation
  */
-let docCommentStart = /^##[ \t]*/;
 function leftAlign(docComment: string): string {
     const lines = docComment.split("\n");
     const minLength = lines.map((line) => {
@@ -467,10 +479,22 @@ function leftAlign(docComment: string): string {
 
 // LANGUAGE FEATURES
 
+function findFunctionBlock(pos: Position): FunctionBlock|undefined {
+    let fbIndex = binsearchIndex(functionBlocks, (a) => positionCompare(a.start, pos));
+
+    return fbIndex >= 0 && fbIndex < functionBlocks.length &&
+           functionBlocks[fbIndex].end !== undefined &&
+           positionCompare(functionBlocks[fbIndex].start, pos) < 0 &&
+           positionCompare(functionBlocks[fbIndex].end!, pos) > 0?
+           functionBlocks[fbIndex]: undefined;
+}
+
 // Finds symbol to be completed and returns all symbols with a corresponding
 // definition.
 function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams): CompletionItem[] {
     const compl = builtInCompletions(textDocumentPosition);
+    const fb = findFunctionBlock(textDocumentPosition.position);
+    const fbScope = fb === undefined? undefined: fb.functionSymbol;
 
     let completions: Map<string, Set<string>> = new Map();
     documentMap.forEach(function(doc: AWKDocument): void {
@@ -481,11 +505,13 @@ function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams):
                     if (symbol !== undefined /*&& symbol.startsWith(usage!.symbol)*/) {
                         for (let i = 0; i < definitions.length; i++) {
                             const def = definitions[i];
-                            if (!completions.has(symbol)) {
-                                completions.set(symbol, new Set());
-                            }
-                            if (def.docComment !== undefined && def.docComment !== "") {
-                                completions.get(symbol)!.add(leftAlign(def.docComment));
+                            if (def.scope === fbScope) {
+                                if (!completions.has(symbol)) {
+                                    completions.set(symbol, new Set());
+                                }
+                                if (def.docComment !== undefined && def.docComment !== "") {
+                                    completions.get(symbol)!.add(leftAlign(def.docComment));
+                                }
                             }
                         }
                     }
@@ -531,6 +557,8 @@ function makeBuiltInHover(descr: BuiltInFunction): string {
 function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hover {
     const usage = findSymbolForPosition(textDocumentPosition);
     const doc = documentMap.get(textDocumentPosition.textDocument.uri);
+    const fb = findFunctionBlock(textDocumentPosition.position);
+    const fbScope = fb === undefined? undefined: fb.functionSymbol;
 
 	if (doc === undefined || usage === undefined) {
         return { contents: [] };
@@ -556,28 +584,36 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
             const definitions = defMap.get(usage!.symbol)!;
             for (let i = 0; i < definitions.length; i++) {
                 const def = definitions[i];
-                let text: string|undefined;
-                switch (def.type) {
-                  case SymbolType.globalVariable:
-                    text = "global variable";
-                    break;
-                  case SymbolType.localVariable:
-                    text = "parameter/local variable";
-                    break;
-                  case SymbolType.func:
-                    const name = def.getSymbol();
-                    text = "function " + name + "(" + functionParameters[name].join(", ") + ")";
-                    break;
-                }
-                if (def.docComment !== undefined) {
-                    if (text !== undefined) {
-                        text += "\n" + leftAlign(def.docComment);
-                    } else {
-                        text = leftAlign(def.docComment);
+                if (def.scope === fbScope) {
+                    let text: string|undefined;
+                    switch (def.type) {
+                    case SymbolType.globalVariable:
+                        text = "global variable";
+                        break;
+                    case SymbolType.localVariable:
+                        text = "local variable";
+                        break;
+                    case SymbolType.parameter:
+                        text = "function parameter";
+                        break;
+                    case SymbolType.func:
+                        const name = def.symbol;
+                        text = "function " + name + "(" +
+                            (def.parameters === undefined? "":
+                            def.parameters.map(paramDef => paramDef.symbol).join(", ")
+                            ) + ")";
+                        break;
                     }
-                }
-                if (text !== undefined) {
-                    hoverTexts.push(text);
+                    if (def.docComment !== undefined) {
+                        if (text !== undefined) {
+                            text += "\n" + leftAlign(def.docComment);
+                        } else {
+                            text = leftAlign(def.docComment);
+                        }
+                    }
+                    if (text !== undefined) {
+                        hoverTexts.push(text);
+                    }
                 }
             }
         }
@@ -727,6 +763,7 @@ function awkSignatureHelper(textDocumentPosition: TextDocumentPositionParams, to
     const paramUsage = findParameterUsage(doc, textDocumentPosition);
 
     if (paramUsage === undefined || paramUsage.parameterIndex === -1) {
+        connection.console.log(`signature for ${textDocumentPosition.position.line+1},${textDocumentPosition.position.character+1} not found`);
         return {
             signatures: signatures,
             activeSignature: null,
@@ -734,9 +771,11 @@ function awkSignatureHelper(textDocumentPosition: TextDocumentPositionParams, to
         };
     }
     const funcName = paramUsage.functionName.symbol;
+    connection.console.log(`signature for ${textDocumentPosition.position.line+1},${textDocumentPosition.position.character+1} is ${funcName}`);
     const funcDef: SymbolDefinition|undefined = awkGetFunctionDefinition(paramUsage.functionName);
     if (funcDef !== undefined) {
-        const parameters = funcName in functionParameters? functionParameters[funcName]: [];
+        const parameters = funcDef.parameters === undefined? []:
+                           funcDef.parameters.map(paramDef => paramDef.symbol);
         signatures.push({
             label: funcName + "(" + parameters.join(", ") + ")",
             documentation: funcDef.docComment === ""? undefined: funcDef.docComment,

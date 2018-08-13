@@ -58,6 +58,11 @@ export function setFunctionCallFun(fn: (start: boolean, line: number, position: 
     functionCallFun = fn;
 }
 
+let registerNumberOfParameters: (fn: SymbolDefinition) => void;
+export function setRegisterNumberOfParameters(fn: (fn: SymbolDefinition) => void) {
+    registerNumberOfParameters = fn;
+}
+
 // Functions to report errors and warnings
 
 function llerror(...args: any[]): void {
@@ -173,6 +178,9 @@ export let functionBlocks: FunctionBlock[] = [];
  * Marks start of function blovk
  */
 function enterFunctionBlock(): void {
+    if (globalFunctionName !== undefined) {
+        registerNumberOfParameters(globalFunctionName);
+    }
     functionBlocks.push({
         functionSymbol: globalFunctionName,
         start: {line: lastSymbolPos.line - 1, character: lastSymbolPos.position - 1 },
@@ -212,6 +220,7 @@ export interface BuiltInFunction {
     name: string;
     parameters?: string[];
     firstOptional?: number;
+    maxNrArguments?: number;
     returns?: string;
     awk: boolean;
     description: string;
@@ -349,17 +358,22 @@ export let builtInSymbols: {[name: string]: BuiltInFunction} = {
         name: "print",
         parameters: ["expression"],
         firstOptional: 0,
+        maxNrArguments: Number.MAX_SAFE_INTEGER,
         description: "Print the expression, or $0 if missing.",
         awk: true
     },
     printf: {
         name: "printf",
+        firstOptional: 1,
+        maxNrArguments: Number.MAX_SAFE_INTEGER,
         parameters: ["format", " expression1", " ..."],
         description: "Print the format string replacing the arguments with the expressions.",
         awk: true
     },
     sprintf: {
         name: "sprintf",
+        firstOptional: 1,
+        maxNrArguments: Number.MAX_SAFE_INTEGER,
         parameters: ["format", " expression1", " ..."],
         description: "Return (without printing) the string that printf would have printed out with the same arguments (see Printf).",
         awk: true
@@ -1012,7 +1026,6 @@ actual_parameters(registerParameters boolean) -> parameters ExprTreeArray = { []
         {
             if (registerParameters) {
                 parameterFun(-1, true, lastSymbolPos.line, lastSymbolPos.position + lastSymbol.length);
-                parameterFun(-1, false, llLineNumber, llLinePosition);
             }
         }
     ),

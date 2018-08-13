@@ -76,9 +76,7 @@ export function findPathPositionNode(tree: PathPositionTree|undefined, path: str
     return ptr !== undefined && ptr.length !== 0? ptr[ptr.length - 1]: undefined;
 }
 
-/** Close unclosed top nodes (happens because of the artificial adding of an extra
-    level under screenArea). Cannot close terminal attributes, but they cannot
-    be left open anyway. */
+/** Close unclosed top nodes. */
 export function finishPositionTree(tree: PathPositionTree): void {
     for (var i = 0; i < tree.length; i++) {
         var node = tree[i];

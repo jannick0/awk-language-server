@@ -21,8 +21,10 @@ import {
     parse, setFileBaseName, setDefineFun, setMessageFun, setUsageFun,
     setIncludeFun, updateStylisticWarnings, lastSymbolPos, builtInSymbols,
     BuiltInFunction, AwkLanguageServerSettings, setFunctionCallFun,
-    setParameterFun, functionBlocks, FunctionBlock
+    setParameterFun, functionBlocks, FunctionBlock, setRegisterNumberOfParameters
 } from "./awk";
+
+import { transitiveClosure } from './util';
 
 import  {
     finishPositionTree, positionCompare
@@ -101,6 +103,7 @@ function sendDiagnostics(): void {
 
 function finishUpProcessing(): void {
     closeEmptyDocuments();
+    semanticAnalysis();
     sendDiagnostics();
 } 
 
@@ -324,6 +327,9 @@ function validateTextDocument(doc: AWKDocument, text: string, openInEditor: bool
         doc.registerFunctionCallParameter(parameterIndex, start, line - 1, position - 1);
         // connection.console.log(`param=${parameterIndex}, start=${start}, line=${line}, positions=${position}`);
     });
+    setRegisterNumberOfParameters(function(fn: SymbolDefinition): void {
+        doc.registerNumberOfParameters(fn);
+    });
 
 	validateText(doc, text);
 }
@@ -339,7 +345,6 @@ function validateText(doc: AWKDocument, text: string): void {
 	}
 	parseLevel++;
 
-    // Clear information from previous parse
     doc.clear();
 
     // Parse the text; messages are collected via the above handlers
@@ -351,10 +356,20 @@ function validateText(doc: AWKDocument, text: string): void {
     }
 
     finishPositionTree(doc.positionTree);
+
+    // Mark documents for semantic analysis if 
+    alteredDocuments.add(doc);
+    // If the definitions in the document changed, all documents that include
+    // `doc` must be checked too.
+    if (!documentsWithAlteredDefinitions.has(doc) &&
+          doc.functionInformationHasChanged()) {
+        documentsWithAlteredDefinitions.add(doc);
+    }
+
 	parseLevel--;
 }
 
-// Returns exact match in sorted array, or undefined
+/** Returns exact match in sorted array, or undefined */
 function binsearch<A, B>(arr: A[], compareToTarget: (a: A) => number): A|undefined {
     let from: number = 0;
     let to: number = arr.length - 1;
@@ -376,9 +391,11 @@ function binsearch<A, B>(arr: A[], compareToTarget: (a: A) => number): A|undefin
     return compareToTarget(arr[from]) === 0? arr[from]: undefined;
 }
 
-// Returns index of parameter usage that is <= target in a sorted array; this
-// can be outside the array when the target lies before the first entry or after
-// the last.
+/**
+ * Returns index in `arr` that is <= target in a sorted array; this
+ * can be outside the array when the target lies before the first entry or
+ * after.
+ */
 function binsearchIndex<A, B>(arr: A[], compareToTarget: (a: A) => number): number {
     let from: number = 0;
     let to: number = arr.length - 1;
@@ -428,6 +445,12 @@ function findSymbolForPosition(textDocumentPosition: TextDocumentPositionParams)
     }
 }
 
+/**
+ * Returns the parameter at the given position or undefined between calls
+ * 
+ * @param doc Document in which to search
+ * @param textDocumentPosition position of the cursor
+ */
 function findParameterUsage(doc: AWKDocument, textDocumentPosition: TextDocumentPositionParams): ParameterUsage|undefined {
     const pos = textDocumentPosition.position;
 
@@ -437,6 +460,11 @@ function findParameterUsage(doc: AWKDocument, textDocumentPosition: TextDocument
     let firstIndex = binsearchIndex(doc.parameterUsage, (a) => positionCompare(a.position, pos));
     if (firstIndex === -1) {
         return undefined;
+    }
+    if (doc.parameterUsage[firstIndex].parameterIndex === -1) {
+        if (positionCompare(doc.parameterUsage[firstIndex].position, pos) < 0) {
+            return undefined;
+        }
     }
     while (firstIndex > 0 &&
            positionCompare(doc.parameterUsage[firstIndex].position,
@@ -505,7 +533,7 @@ function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams):
                     if (symbol !== undefined /*&& symbol.startsWith(usage!.symbol)*/) {
                         for (let i = 0; i < definitions.length; i++) {
                             const def = definitions[i];
-                            if (def.scope === fbScope) {
+                            if (def.scope === fbScope || def.scope === undefined) {
                                 if (!completions.has(symbol)) {
                                     completions.set(symbol, new Set());
                                 }
@@ -547,11 +575,9 @@ function awkCompletionHandler(textDocumentPosition: TextDocumentPositionParams):
 
 function makeBuiltInHover(descr: BuiltInFunction): string {
     return descr.parameters === undefined? "built-in variable: " + descr.description:
-           "built-in function: " + descr.name + "(" + 
-           (descr.firstOptional === undefined? descr.parameters.join(","):
-            descr.parameters.slice(0, descr.firstOptional).join(",") +
-            "[" + descr.parameters.slice(descr.firstOptional).join(",") + "]") +
-           "): " + descr.description;
+           "built-in function: " + descr.name + "(" +
+           descr.parameters.map((param, i) => i >= descr.firstOptional!? param + "?": param).join(",") +
+           "):\n\n" + descr.description;
 }
 
 function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hover {
@@ -584,19 +610,19 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
             const definitions = defMap.get(usage!.symbol)!;
             for (let i = 0; i < definitions.length; i++) {
                 const def = definitions[i];
-                if (def.scope === fbScope) {
+                if (def.scope === fbScope || def.scope === undefined) {
                     let text: string|undefined;
                     switch (def.type) {
-                    case SymbolType.globalVariable:
+                       case SymbolType.globalVariable:
                         text = "global variable";
                         break;
-                    case SymbolType.localVariable:
+                      case SymbolType.localVariable:
                         text = "local variable";
                         break;
-                    case SymbolType.parameter:
+                      case SymbolType.parameter:
                         text = "function parameter";
                         break;
-                    case SymbolType.func:
+                      case SymbolType.func:
                         const name = def.symbol;
                         text = "function " + name + "(" +
                             (def.parameters === undefined? "":
@@ -606,7 +632,7 @@ function awkHoverProvider(textDocumentPosition: TextDocumentPositionParams): Hov
                     }
                     if (def.docComment !== undefined) {
                         if (text !== undefined) {
-                            text += "\n" + leftAlign(def.docComment);
+                            text += "\n\n" + leftAlign(def.docComment);
                         } else {
                             text = leftAlign(def.docComment);
                         }
@@ -762,8 +788,8 @@ function awkSignatureHelper(textDocumentPosition: TextDocumentPositionParams, to
     }
     const paramUsage = findParameterUsage(doc, textDocumentPosition);
 
-    if (paramUsage === undefined || paramUsage.parameterIndex === -1) {
-        connection.console.log(`signature for ${textDocumentPosition.position.line+1},${textDocumentPosition.position.character+1} not found`);
+    if (paramUsage === undefined /* || paramUsage.parameterIndex === -1 */) {
+        // connection.console.log(`signature for ${textDocumentPosition.position.line+1},${textDocumentPosition.position.character+1} not found`);
         return {
             signatures: signatures,
             activeSignature: null,
@@ -771,7 +797,7 @@ function awkSignatureHelper(textDocumentPosition: TextDocumentPositionParams, to
         };
     }
     const funcName = paramUsage.functionName.symbol;
-    connection.console.log(`signature for ${textDocumentPosition.position.line+1},${textDocumentPosition.position.character+1} is ${funcName}`);
+    // connection.console.log(`signature for ${textDocumentPosition.position.line+1},${textDocumentPosition.position.character+1} is ${funcName}`);
     const funcDef: SymbolDefinition|undefined = awkGetFunctionDefinition(paramUsage.functionName);
     if (funcDef !== undefined) {
         const parameters = funcDef.parameters === undefined? []:
@@ -819,8 +845,31 @@ function awkSignatureHelper(textDocumentPosition: TextDocumentPositionParams, to
     return {
         signatures: signatures,
         activeSignature: 0,
-        activeParameter: paramUsage.parameterIndex
+        activeParameter: Math.max(paramUsage.parameterIndex, 0)
     };
+}
+
+let documentsWithAlteredDefinitions: Set<AWKDocument> = new Set<AWKDocument>();
+let alteredDocuments: Set<AWKDocument> = new Set<AWKDocument>();
+
+/**
+ * Performs check on function calls in all documents in `alteredDocuments` and
+ * the documents that include it.
+ */
+function semanticAnalysis(): void {
+    // Add documents that include any of the documents in documentsWithAlteredDefinitions
+    transitiveClosure(documentsWithAlteredDefinitions, doc => doc.includedBy.keys());
+    // Add the documents that were altered themselves (this is a superset
+    // of the initial documentsWithAlteredDefinitions, but the documents that
+    // include it don't need reanalysis).
+    for (const doc of alteredDocuments) {
+        documentsWithAlteredDefinitions.add(doc);
+    }
+    for (const doc of documentsWithAlteredDefinitions) {
+        doc.checkFunctionCalls();
+    }
+    documentsWithAlteredDefinitions.clear();
+    alteredDocuments.clear();
 }
 
 // Fake reference for the source that includes open documents

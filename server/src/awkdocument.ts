@@ -3,7 +3,7 @@
  */
 
 import {
-    EMap, Equal
+    EMap, Equal, transitiveClosure
 } from './util';
 
 import {
@@ -23,6 +23,10 @@ import {
     ParameterUsage
 } from './symbols';
 
+import {
+    builtInSymbols
+} from './awk';
+
 export class IncludeDeclarationInfo implements Equal {
     constructor(public range: Range) {
     }
@@ -39,7 +43,6 @@ export class IncludeDeclarationInfo implements Equal {
  * @class AWKDocument
  */
 export class AWKDocument {
-    
     /** Location and unique id of the document */
     uri: string;
 
@@ -52,10 +55,10 @@ export class AWKDocument {
     /** Position tree representing the symbols and their sub expressions in this document */
     positionTree: PathPositionTree;
 
-    /** docURIs that include this document */
+    /** Documents that include this document */
     includedBy: EMap<AWKDocument, IncludeDeclarationInfo> = new EMap<AWKDocument, IncludeDeclarationInfo>();
 
-    /** docURIs that this document includes */
+    /** Documents that this document includes */
     includes: EMap<AWKDocument, IncludeDeclarationInfo>;
 
     /**
@@ -85,6 +88,10 @@ export class AWKDocument {
         this.functionCallStack = [];
         this.parameterUsage = [];
         this.includes = new EMap<AWKDocument, IncludeDeclarationInfo>();
+        if (this.oldNumberOfParameters === undefined) {
+            this.oldNumberOfParameters = this.numberOfParameters;
+        }
+        this.numberOfParameters = {};
     }
 
     addSymbolDefinition(symbol: string, symbolDefinition: SymbolDefinition): SymbolDefinition {
@@ -152,6 +159,7 @@ export class AWKDocument {
      *  (re)parsing. If the same document is parsed again, the state afterwards
      *  is identical to the state before calling this function. Tracing changes
      *  to inheritanceMapClosure is the caller's responsibility.
+     *  Keeps previous caches for incremental updates.
      */
     clear(): void {
         this.clearIncludedBy();
@@ -265,9 +273,22 @@ export class AWKDocument {
         }
     }
 
+    /**
+     * The call stack of functions at the current symbol during parsing
+     */
     functionCallStack: SymbolUsage[] = [];
+    /**
+     * Positions of the start and end of each function parameter, sorted by
+     * ascending text position.
+     */
     parameterUsage: ParameterUsage[] = [];
 
+    /**
+     * Called by the parser when a function call starts or ends
+     * 
+     * @param start True at start of function call, false at end
+     * @param position text position
+     */
     registerFunctionCall(start: boolean, position: Position): void {
         if (start) {
             this.functionCallStack.push(this.usedSymbols[this.usedSymbols.length - 1]);
@@ -278,9 +299,164 @@ export class AWKDocument {
         }
     }
 
+    /**
+     * Registers begin and end of a function parameter
+     * 
+     * @param parameterIndex 0 based index of the parameter
+     * @param start true at start of parameter, false at end
+     * @param line line number in text
+     * @param position character position in text
+     */
     registerFunctionCallParameter(parameterIndex: number, start: boolean, line: number, position: number): void {
         this.parameterUsage.push(new ParameterUsage(
             this.functionCallStack[this.functionCallStack.length - 1],
             parameterIndex, {line: line, character: position}, start));
+    }
+
+    /**
+     * Number of parameters of the functions declared in this document
+     */
+    numberOfParameters: {[fnName: string]: number} = {};
+    /**
+     * Number of parameters of the functions declared in the previous version of
+     * this document
+     */
+    oldNumberOfParameters: {[fnName: string]: number}|undefined = undefined;
+
+    /**
+     * Stores the number of parameters for the function for the current analysis.
+     * Comparing to the results of the previous analysis shows changes.
+     */
+    registerNumberOfParameters(fn: SymbolDefinition): void {
+        this.numberOfParameters[fn.symbol] = fn.parameters.length;
+    }
+
+    /**
+     * Compares the map with function information (just number of parameters
+     * really) to the last known information.
+     * 
+     * @returns true when at least one function has changed
+     */
+    functionInformationHasChanged(): boolean {
+        let change: boolean = false;
+
+        if (this.oldNumberOfParameters === undefined) {
+            this.oldNumberOfParameters = {};
+        }
+        for (const fnName in this.numberOfParameters) {
+            if (this.numberOfParameters[fnName] !== this.oldNumberOfParameters[fnName]) {
+                change = true;
+                break;
+            }
+        }
+        if (!change) {
+            for (const fnName in this.oldNumberOfParameters) {
+                if (!(fnName in this.numberOfParameters)) {
+                    change = true;
+                    break;
+                }
+            }
+        }
+        this.oldNumberOfParameters = undefined;
+        return change;
+    }
+
+    checkFunctionCalls(): void {
+        let includedDocs = new Set(this.includes.keys());
+        let numberOfParameters: {[fnName: string]: number} = { ...this.numberOfParameters};
+
+        this.resetAnalysisDiagnostics();
+
+        // Get set of all included documents; note that includedDocs does not
+        // contain this.
+        transitiveClosure(includedDocs, doc => doc.includes.keys());
+        // Compile list of all available function names and their number of
+        // parameters; issue warning when function included and contained in
+        // this document.
+        for (const inclDoc of includedDocs) {
+            const funDefs = inclDoc.numberOfParameters;
+            for (const funName in funDefs) {
+                const nrParamFun = funDefs[funName];
+                if (funName in numberOfParameters) {
+                    if (funName in this.numberOfParameters) {
+                        const funDef = this.getSymbolDefinitions(funName, SymbolType.func);
+                        if (funDef !== undefined && funDef.length > 0) {
+                            this.addAnalysisDiagnostic(Diagnostic.create(
+                                funDef[0].getRange(),
+                                "already defined in `${inclDoc.uri}`"));
+                        }
+                    }
+                } else {
+                    numberOfParameters[funName] = funDefs[funName];
+                }
+            }
+        }
+
+        // Mark wrong number of parameters and ambiguous and non-existent function calls
+
+        function getNrParametersRange(fnName: string): [number, number] {
+            if (fnName in numberOfParameters) {
+                return [numberOfParameters[fnName], numberOfParameters[fnName]];
+            } else if (fnName in builtInSymbols) {
+                const bif = builtInSymbols[fnName];
+                if (bif.parameters === undefined) {
+                    return [-1, Number.MAX_SAFE_INTEGER];
+                } else {
+                    const max = bif.maxNrArguments !== undefined?
+                                bif.maxNrArguments: bif.parameters.length;
+                    return bif.firstOptional !== undefined?
+                           [bif.firstOptional, max]: [max, max];
+                }
+            } else {
+                return [-1, Number.MAX_SAFE_INTEGER];
+            }
+        }
+
+        if (this.parameterUsage.length === 0) {
+            return;
+        }
+
+        // Establish min/max nr of parameters for first call
+        let funcName: SymbolUsage = this.parameterUsage[0].functionName;
+        let [minNrParams, maxNrParams] = getNrParametersRange(funcName.symbol);
+        let nrParameters: number = 0;
+        
+        this.checkFunctionExistence(funcName, numberOfParameters);
+
+        for (let i = 0; i < this.parameterUsage.length; i++) {
+            const param = this.parameterUsage[i];
+            if (param.parameterIndex === -1) {
+                if (nrParameters < minNrParams) {
+                    const endPosition = {line: param.position.line, character: param.position.character + 1};
+                    this.addAnalysisDiagnostic(Diagnostic.create(
+                        Range.create(param.position, endPosition),
+                        "not enough arguments"));
+                }
+                if (i < this.parameterUsage.length - 1) {
+                    funcName = this.parameterUsage[i + 1].functionName;
+                    [minNrParams, maxNrParams] = getNrParametersRange(funcName.symbol);
+                    nrParameters = 0;
+                    this.checkFunctionExistence(funcName, numberOfParameters);
+                }
+            } else {
+                nrParameters = param.parameterIndex + 1;
+                if (!param.start && nrParameters > maxNrParams) {
+                    const endPosition = i > 0? this.parameterUsage[i - 1].position: {line: 0, character: 0};
+                    this.addAnalysisDiagnostic(Diagnostic.create(
+                        Range.create(param.position, endPosition),
+                        "too many arguments"));
+                }
+            }
+        }
+    }
+
+    // Mark undefined functions
+    checkFunctionExistence(fn: SymbolUsage, numberOfParameters: {[fnName: string]: number}): void {
+        const sym: string = fn.symbol;
+
+        if (!(sym in numberOfParameters) && !(sym in builtInSymbols)) {
+            this.addAnalysisDiagnostic(Diagnostic.create(
+                fn.getRange(), "undeclared function"));
+        }
     }
 }

@@ -99,3 +99,28 @@ export class EKMap<K, V> extends Map<K, V> implements Equal {
         }
     }
 }
+
+/**
+ * Get set of all documents that has a transitive relation `relation` with one of
+ * the documents in `docs` and add them back to `docs`.
+ * @param docs set of documents
+ * @param relation maps a document d onto the documents with with d has a relation
+ */
+export function transitiveClosure<T>(docs: Set<T>, relation: (doc: T) => IterableIterator<T>): void {
+    let docList: T[] = [];
+
+    for (const doc of docs) {
+        docList.push(doc);
+    }
+    for (let i = 0; i < docList.length; i++) {
+        const doc: T = docList[i];
+        if (doc !== undefined) {
+            for (const inclDoc of relation(doc)) {
+                if (!docs.has(inclDoc)) {
+                    docs.add(inclDoc);
+                    docList.push(inclDoc);
+                }
+            }
+        }
+    }
+}

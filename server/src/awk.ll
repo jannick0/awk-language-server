@@ -94,7 +94,7 @@ let stylisticWarnings = {
     gawkCompatibility: true
 };
 
-export function updateStylisticWarnings(config: AwkLanguageServerSettings): void {
+export function updateStylisticWarnings(config: AwkLanguageServerSettings, pGawkMode: boolean|undefined): void {
     if (config !== undefined && config.gawk !== undefined) {
         stylisticWarnings.gawkMode = config.gawk;
     }
@@ -107,6 +107,12 @@ export function updateStylisticWarnings(config: AwkLanguageServerSettings): void
             stylisticWarnings.gawkCompatibility = sw.compatibility && !stylisticWarnings.gawkMode;
         }
     }
+}
+
+let gawkMode: boolean|undefined = true;
+
+export function setFileMode(fileMode: boolean|undefined): void {
+    gawkMode = fileMode;
 }
 
 /**
@@ -764,13 +770,13 @@ nl_opt: SHIFT nl SEQUENCE OPTION.
 
 include_line:
     include_sym, {
-		if (!stylisticWarnings.gawkCompatibility) {
+		if (gawkMode !== true && !stylisticWarnings.gawkCompatibility) {
             messageFun("error", "mode", "only in gawk",
                        lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }
     },
     string, {
-		if (stylisticWarnings.gawkMode) {
+		if (gawkMode !== true && stylisticWarnings.gawkMode) {
             includeFun(lastSymbol.slice(1, -1), true, lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }
     }.
@@ -811,16 +817,21 @@ function_definition:
    to circumvent awk's lack of local variables)
  */
 formal_parameters:
-    { let isParameter: boolean = true; },
+    {
+        let isParameter: boolean = true;
+        let paramNr: number = 0;
+    },
     (
         (
             {
-                if (ignoreBuffer.length > 2 || (ignoreBuffer.length === 1 && ignoreBuffer.charAt(0) !== " ")) {
+                if ((paramNr > 0 && (ignoreBuffer.length > 1 || (ignoreBuffer.length === 1 && ignoreBuffer.charAt(0) !== " "))) ||
+                      (paramNr === 0 && ignoreBuffer.length !== 0)) {
                     isParameter = false;
                 }
             },
             identifier, {
                 addParameter(lastSymbol, isParameter);
+                paramNr++;
             }
         ) CHAIN (comma, nl_opt)
     ) OPTION,
@@ -833,28 +844,30 @@ block(is_line_block boolean):
     nl_opt.
 
 statement_sequence(is_line_block boolean):
-    (
-        (
-            assign_statement;
-            delete_statement;
-            print_statement;
-            break_sym;
-            continue_sym;
-            return_statement(is_line_block);
-            exit_statement(is_line_block)
-        ),
-        (
-            statement_sep, statement_sequence(is_line_block) OPTION;
-            /* end of block */
-        )
-    );
-    if_statement(is_line_block), statement_sequence(is_line_block) OPTION;
-    for_statement(is_line_block), statement_sequence(is_line_block) OPTION;
-    while_statement(is_line_block), statement_sequence(is_line_block) OPTION;
-    do_while_statement(is_line_block), statement_sequence(is_line_block) OPTION;
-    next_statement(is_line_block), statement_sequence(is_line_block) OPTION;
-    switch_statement(is_line_block), statement_sequence(is_line_block) OPTION;
-    statement_sep, statement_sequence(is_line_block) OPTION.
+    doc_comment OPTION,
+    (    (
+            (
+                assign_statement;
+                delete_statement;
+                print_statement;
+                break_sym;
+                continue_sym;
+                return_statement(is_line_block);
+                exit_statement(is_line_block)
+            ),
+            (
+                statement_sep, statement_sequence(is_line_block) OPTION;
+                /* end of block */
+            )
+        );
+        if_statement(is_line_block), statement_sequence(is_line_block) OPTION;
+        for_statement(is_line_block), statement_sequence(is_line_block) OPTION;
+        while_statement(is_line_block), statement_sequence(is_line_block) OPTION;
+        do_while_statement(is_line_block), statement_sequence(is_line_block) OPTION;
+        next_statement(is_line_block), statement_sequence(is_line_block) OPTION;
+        switch_statement(is_line_block), statement_sequence(is_line_block) OPTION;
+        statement_sep, statement_sequence(is_line_block) OPTION
+    ).
 
 statement(is_line_block boolean):
     assign_statement;
@@ -947,7 +960,7 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
     { let indirection: boolean = false; },
     (at_sym, {
         indirection = true;
-		if (stylisticWarnings.gawkCompatibility) {
+		if (gawkMode !== true && stylisticWarnings.gawkCompatibility) {
             messageFun("error", "mode", "only available in gawk",
                        lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }
@@ -960,7 +973,8 @@ single_term -> expr ExprTreeOrUndefined = { undefined }:
         } else {
             variableUsage(funcId);
         }
-		if (stylisticWarnings.gawkCompatibility && funcId in builtInSymbols && !builtInSymbols[funcId].awk) {
+		if (gawkMode !== true && stylisticWarnings.gawkCompatibility &&
+              funcId in builtInSymbols && !builtInSymbols[funcId].awk) {
             messageFun("error", "mode", "only available in gawk",
                        lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }
@@ -1045,7 +1059,7 @@ print_statement:
         };
         printf_sym, {
             usageFun(SymbolType.func, undefined, "printf", lastSymbolPos.line, lastSymbolPos.position);
-            if (stylisticWarnings.gawkCompatibility) {
+            if (gawkMode !== true && stylisticWarnings.gawkCompatibility) {
                 messageFun("error", "mode", "only available in gawk",
                         lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
             }

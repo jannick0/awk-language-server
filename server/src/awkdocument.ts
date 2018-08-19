@@ -417,34 +417,35 @@ export class AWKDocument {
         }
 
         // Establish min/max nr of parameters for first call
-        let funcName: SymbolUsage = this.parameterUsage[0].functionName;
-        let [minNrParams, maxNrParams] = getNrParametersRange(funcName.symbol);
-        let nrParameters: number = 0;
-        
-        this.checkFunctionExistence(funcName, numberOfParameters);
+        let nrParamRangeStack = [];
+        let nrParametersStack: number[] = [];
 
         for (let i = 0; i < this.parameterUsage.length; i++) {
             const param = this.parameterUsage[i];
-            if (param.parameterIndex === -1) {
-                if (nrParameters < minNrParams) {
-                    const endPosition = {line: param.position.line, character: param.position.character + 1};
-                    this.addAnalysisDiagnostic(Diagnostic.create(
-                        Range.create(param.position, endPosition),
-                        "not enough arguments"));
+            if (param.start) {
+                if (param.parameterIndex <= 0) {
+                    // First parameter of function call
+                    nrParamRangeStack.push(getNrParametersRange(param.functionName.symbol));
+                    nrParametersStack.push(0);
+                    this.checkFunctionExistence(param.functionName, numberOfParameters);
                 }
-                if (i < this.parameterUsage.length - 1) {
-                    funcName = this.parameterUsage[i + 1].functionName;
-                    [minNrParams, maxNrParams] = getNrParametersRange(funcName.symbol);
-                    nrParameters = 0;
-                    this.checkFunctionExistence(funcName, numberOfParameters);
-                }
+                nrParametersStack[nrParametersStack.length - 1] = param.parameterIndex + 1;
             } else {
-                nrParameters = param.parameterIndex + 1;
-                if (!param.start && nrParameters > maxNrParams) {
-                    const endPosition = i > 0? this.parameterUsage[i - 1].position: {line: 0, character: 0};
-                    this.addAnalysisDiagnostic(Diagnostic.create(
-                        Range.create(param.position, endPosition),
-                        "too many arguments"));
+                if (param.parameterIndex === -1) {
+                    // Closing function call
+                    const [minNrParams, maxNrParams] = nrParamRangeStack.pop()!;
+                    const nrParameters = nrParametersStack.pop()!;
+                    if (nrParameters < minNrParams) {
+                        const endPosition = {line: param.position.line, character: param.position.character + 1};
+                        this.addAnalysisDiagnostic(Diagnostic.create(
+                            param.functionName.getRange(),
+                            "not enough arguments"));
+                    } else if (nrParameters > maxNrParams) {
+                        const endPosition = {line: param.position.line, character: param.position.character + 1};
+                        this.addAnalysisDiagnostic(Diagnostic.create(
+                            param.functionName.getRange(),
+                            "too many arguments"));
+                    }
                 }
             }
         }

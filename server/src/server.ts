@@ -14,14 +14,14 @@ import {
     SymbolInformation, SymbolKind, ReferenceParams,
     WorkspaceSymbolParams, TextDocumentPositionParams, TextDocument,
     DocumentSymbolParams, DidCloseTextDocumentParams, SignatureHelp,
-    CancellationToken, SignatureInformation, ParameterInformation, ResponseError
+    CancellationToken, SignatureInformation, ParameterInformation, ResponseError, TextDocumentChangeEvent
 } from 'vscode-languageserver';
 
 import {
     parse, setFileBaseName, setDefineFun, setMessageFun, setUsageFun,
     setIncludeFun, updateStylisticWarnings, lastSymbolPos, builtInSymbols,
     BuiltInFunction, AwkLanguageServerSettings, setFunctionCallFun,
-    setParameterFun, functionBlocks, FunctionBlock, setRegisterNumberOfParameters
+    setParameterFun, functionBlocks, FunctionBlock, setRegisterNumberOfParameters, setFileMode
 } from "./awk";
 
 import { transitiveClosure } from './util';
@@ -105,7 +105,7 @@ function finishUpProcessing(): void {
     closeEmptyDocuments();
     semanticAnalysis();
     sendDiagnostics();
-} 
+}
 
 // LANGUAGE DEFINITION AND USAGE
 
@@ -142,6 +142,7 @@ function addInclude(filename: string, relative: boolean, position: Position, len
 	const inclURI: string = makeURI(inclFileName);
     if (documentMap.has(inclURI)) {
         // Already parsed
+        updateInclude(includeSource, documentMap.get(inclURI)!, getRange(position, length));
         return;
     }
 	// Prevent loading multiple times, possibly in a cycle
@@ -280,7 +281,7 @@ function updateConfiguration(settings: UserPreferences|undefined): boolean {
             config.stylisticWarnings.compatibility = !!settings.stylisticWarnings.compatibility;
             reparse = true;
         }
-        updateStylisticWarnings(config);
+        updateStylisticWarnings(config, undefined);
         if (settings.path instanceof Array) {
             if (setIncludePath(settings.path)) {
                 reparse = true;
@@ -300,8 +301,15 @@ function updateConfiguration(settings: UserPreferences|undefined): boolean {
 
 // let count: number = 0; // debugging
 
+function getFileAwkMode(text: string): boolean|undefined {
+    const match = text.match(/^#!(.*[^a-z])?([a-z]?awk) +-f/);
+
+    return match === null? undefined: match[2] === "gawk";
+}
+
 function validateTextDocument(doc: AWKDocument, text: string, openInEditor: boolean): void {
     const baseName: string = doc.uri.replace(/^(.*\/)?([^\/]*)\..*$/, "$2");
+    const fileAwkMode = getFileAwkMode(text);
     
     // Set up handlers
     setFileBaseName(baseName.match(/Constants$/)? undefined: baseName);
@@ -331,6 +339,7 @@ function validateTextDocument(doc: AWKDocument, text: string, openInEditor: bool
         doc.registerNumberOfParameters(fn);
     });
 
+    setFileMode(fileAwkMode);
 	validateText(doc, text);
 }
 
@@ -461,10 +470,10 @@ function findParameterUsage(doc: AWKDocument, textDocumentPosition: TextDocument
     if (firstIndex === -1) {
         return undefined;
     }
-    if (doc.parameterUsage[firstIndex].parameterIndex === -1) {
-        if (positionCompare(doc.parameterUsage[firstIndex].position, pos) < 0) {
-            return undefined;
-        }
+    if (doc.parameterUsage[firstIndex].parameterIndex === -1 &&
+          positionCompare(doc.parameterUsage[firstIndex].position, pos) < 0) {
+        // Reject if it follows the final parameter position
+        return undefined;
     }
     while (firstIndex > 0 &&
            positionCompare(doc.parameterUsage[firstIndex].position,
@@ -876,8 +885,8 @@ function semanticAnalysis(): void {
 let editorURI: string = "editor://";
 let editorDocument: AWKDocument = new AWKDocument(editorURI);
 
-function closeDocURI(params: DidCloseTextDocumentParams): void {
-    const doc = documentMap.get(params.textDocument.uri);
+function closeDocURI(params: TextDocumentChangeEvent): void {
+    const doc = documentMap.get(params.document.uri);
 
     if (doc !== undefined) {
         doc.removeIncludedBy(editorDocument);
@@ -935,20 +944,26 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
     }
 });
 
-// The content of a text document has changed. This event is emitted
-// when the text document first opened or when its content has changed.
-documents.onDidChangeContent((change) => {
-    let doc = documentMap.get(change.document.uri);
+function openTextDocument(uri: string, text: string): void {
+    let doc = documentMap.get(uri);
     const type: ProcessQueueItemType = ProcessQueueItemType.awk;
 
     if (doc === undefined) {
         const inclDeclInfo = new IncludeDeclarationInfo({start: {line: 0, character: 0}, end: {line: 1, character: 0}});
-        doc = new AWKDocument(change.document.uri);
+        doc = new AWKDocument(uri);
         doc.addIncludedBy(editorDocument, inclDeclInfo);
-        documentMap.set(change.document.uri, doc);
+        documentMap.set(uri, doc);
     }
-    addToEndOfProcessingQueue(doc, change.document.getText(), type, true);
+    addToEndOfProcessingQueue(doc, text, type, true);
+}
+
+// The content of a text document has changed. This event is emitted
+// when the text document first opened or when its content has changed.
+documents.onDidChangeContent((change) => {
+    openTextDocument(change.document.uri, change.document.getText());
 });
+
+documents.onDidClose(closeDocURI);
 
 // The settings interface describe the server relevant settings part
 interface Settings {
@@ -974,20 +989,6 @@ connection.onDidChangeConfiguration((change) => {
 });
 
 /*
-connection.onDidOpenTextDocument((params) => {
-    // A text document got opened in VSCode.
-    // params.uri uniquely identifies the document. For documents store on disk this is a file URI.
-    // params.text the initial full content of the document.
-    connection.console.log(`${params.uri} opened.`);
-});
-
-connection.onDidChangeTextDocument((params) => {
-    // The content of a text document did change in VSCode.
-    // params.uri uniquely identifies the document.
-    // params.contentChanges describe the content changes to the document.
-    connection.console.log(`${params.uri} changed: ${JSON.stringify(params.contentChanges)}`);
-});
-
 connection.onDidChangeWatchedFiles((change) => {
     // Monitored files have change in VSCode
     connection.console.log('We received an file change event');
@@ -1019,7 +1020,11 @@ connection.onReferences(awkReferenceProvider);
 
 connection.onWorkspaceSymbol(awkWorkspaceSymbolProvider);
 
-connection.onDidCloseTextDocument(closeDocURI);
+// connection.onDidOpenTextDocument(params => {
+//     openTextDocument(params.textDocument.uri, params.textDocument.text);
+// });
+
+// connection.onDidCloseTextDocument(closeDocURI);
 
 connection.onSignatureHelp(awkSignatureHelper);
 

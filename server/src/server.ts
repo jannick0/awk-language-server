@@ -240,6 +240,8 @@ interface UserPreferences {
         missingSemicolon?: boolean;
         /** When true, warns for gawk features in awk mode */
         compatibility?: boolean;
+        /** When true, warns when calling a function with the wrong number of parameters */
+        checkFunctionCalls: boolean;
     };
     path?: string[];
 }
@@ -250,7 +252,8 @@ let config: AwkLanguageServerSettings = {
     gawk: true,
     stylisticWarnings: {
         missingSemicolon: false,
-        compatibility: true
+        compatibility: true,
+        checkFunctionCalls: true
     }
 };
 
@@ -279,6 +282,11 @@ function updateConfiguration(settings: UserPreferences|undefined): boolean {
         if (settings.stylisticWarnings.compatibility !== undefined &&
               settings.stylisticWarnings.compatibility !== config.stylisticWarnings.compatibility) {
             config.stylisticWarnings.compatibility = !!settings.stylisticWarnings.compatibility;
+            reparse = true;
+        }
+        if (settings.stylisticWarnings.checkFunctionCalls !== undefined &&
+              settings.stylisticWarnings.checkFunctionCalls !== config.stylisticWarnings.checkFunctionCalls) {
+            config.stylisticWarnings.checkFunctionCalls = !!settings.stylisticWarnings.checkFunctionCalls;
             reparse = true;
         }
         updateStylisticWarnings(config, undefined);
@@ -358,6 +366,7 @@ function validateText(doc: AWKDocument, text: string): void {
 
     // Parse the text; messages are collected via the above handlers
     try {
+        doc.resetAnalysisDiagnostics();
         parse(text);
     } catch (ex) {
         connection.console.error(ex);
@@ -366,7 +375,7 @@ function validateText(doc: AWKDocument, text: string): void {
 
     finishPositionTree(doc.positionTree);
 
-    // Mark documents for semantic analysis if 
+    // Mark the document for semantic analysis in wrap-up
     alteredDocuments.add(doc);
     // If the definitions in the document changed, all documents that include
     // `doc` must be checked too.
@@ -866,19 +875,21 @@ let alteredDocuments: Set<AWKDocument> = new Set<AWKDocument>();
  * the documents that include it.
  */
 function semanticAnalysis(): void {
-    // Add documents that include any of the documents in documentsWithAlteredDefinitions
-    transitiveClosure(documentsWithAlteredDefinitions, doc => doc.includedBy.keys());
-    // Add the documents that were altered themselves (this is a superset
-    // of the initial documentsWithAlteredDefinitions, but the documents that
-    // include it don't need reanalysis).
-    for (const doc of alteredDocuments) {
-        documentsWithAlteredDefinitions.add(doc);
+    if (config.stylisticWarnings.checkFunctionCalls) {
+        // Add documents that include any of the documents in documentsWithAlteredDefinitions
+        transitiveClosure(documentsWithAlteredDefinitions, doc => doc.includedBy.keys());
+        // Add the documents that were altered themselves (this is a superset
+        // of the initial documentsWithAlteredDefinitions, but the documents that
+        // include it don't need reanalysis).
+        for (const doc of alteredDocuments) {
+            documentsWithAlteredDefinitions.add(doc);
+        }
+        for (const doc of documentsWithAlteredDefinitions) {
+            doc.checkFunctionCalls();
+        }
+        documentsWithAlteredDefinitions.clear();
+        alteredDocuments.clear();
     }
-    for (const doc of documentsWithAlteredDefinitions) {
-        doc.checkFunctionCalls();
-    }
-    documentsWithAlteredDefinitions.clear();
-    alteredDocuments.clear();
 }
 
 // Fake reference for the source that includes open documents

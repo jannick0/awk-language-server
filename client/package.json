@@ -23,7 +23,7 @@
 	"contributes": {
 		"configuration": {
 			"type": "object",
-			"title": "Example configuration",
+			"title": "AWK Language Server Configuration",
 			"properties": {
 				"awk.maxNumberOfProblems": {
 					"type": "number",
@@ -42,12 +42,17 @@
 				"awk.stylisticWarnings.missingSemicolon": {
 					"type": "boolean",
 					"description": "Warn on missing semicolon",
-					"default": "false"
+					"default": false
 				},
 				"awk.stylisticWarnings.compatibility": {
 					"type": "boolean",
 					"description": "Warn when using incompatible functions",
-					"default": "true"
+					"default": true
+				},
+				"awk.stylisticWarnings.checkFunctionCalls": {
+					"type": "boolean",
+					"description": "Warn when calling functions with the wrong number of parameters",
+					"default": true
 				},
 				"awk.path": {
 					"type": "array",

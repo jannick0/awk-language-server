@@ -85,13 +85,16 @@ export interface AwkLanguageServerSettings {
         missingSemicolon: boolean;
         /** When true, warns for gawk features in awk mode */
         compatibility: boolean;
+        /** When true, warns when calling a function with the wrong number of parameters */
+        checkFunctionCalls: boolean;
     };
 }
 
 let stylisticWarnings = {
     missingSemicolon: false,
     gawkMode: true,
-    gawkCompatibility: true
+    gawkCompatibility: true,
+    checkFunctionCalls: true
 };
 
 export function updateStylisticWarnings(config: AwkLanguageServerSettings, pGawkMode: boolean|undefined): void {
@@ -105,6 +108,9 @@ export function updateStylisticWarnings(config: AwkLanguageServerSettings, pGawk
         }
         if (sw.compatibility !== undefined) {
             stylisticWarnings.gawkCompatibility = sw.compatibility && !stylisticWarnings.gawkMode;
+        }
+        if (sw.checkFunctionCalls !== undefined) {
+            stylisticWarnings.checkFunctionCalls = sw.checkFunctionCalls;
         }
     }
 }
@@ -770,7 +776,7 @@ nl_opt: SHIFT nl SEQUENCE OPTION.
 
 include_line:
     include_sym, {
-		if (gawkMode !== true && !stylisticWarnings.gawkCompatibility) {
+		if (gawkMode !== true && stylisticWarnings.gawkCompatibility) {
             messageFun("error", "mode", "only in gawk",
                        lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }

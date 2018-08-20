@@ -14,7 +14,7 @@
 	"activationEvents": [
 		"onLanguage:awk"
 	],
-	"homepage": "https://github.com/theovosse/awk-language-server/README.md",
+	"homepage": "https://github.com/theovosse/awk-language-server",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/theovosse/awk-language-server.git"

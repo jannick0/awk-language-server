@@ -782,7 +782,7 @@ include_line:
         }
     },
     string, {
-		if (gawkMode !== true && stylisticWarnings.gawkMode) {
+		if (gawkMode || stylisticWarnings.gawkMode) {
             includeFun(lastSymbol.slice(1, -1), true, lastSymbolPos.line, lastSymbolPos.position, lastSymbol.length);
         }
     }.

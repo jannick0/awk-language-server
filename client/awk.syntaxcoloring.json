@@ -32,24 +32,8 @@
     },
     {
       "comment": "Interpreted string literals",
-      "begin": "\"",
-      "beginCaptures": {
-        "0": {
-          "name": "punctuation.definition.string.begin.awk"
-        }
-      },
-      "end": "\"",
-      "endCaptures": {
-        "0": {
-          "name": "punctuation.definition.string.end.awk"
-        }
-      },
-      "name": "string.quoted.double.awk",
-      "patterns": [
-        {
-          "include": "#string_escaped_char"
-        }
-      ]
+      "match": "\"(\\\\\"|[^\"\r\n])*\"",
+      "name": "string.quoted.double.awk"
     },
     {
       "comment": "Built-in functions",

@@ -42,7 +42,7 @@
     },
     {
       "comment": "Regular expressions",
-      "match": "/.*/",
+      "match": "/(\\[\\^?\\]?(\\\\\\]|\\\\\\[|[^\\[\\]])*\\]|\\\\/|[^/])+/",
       "name": "string.regexp"
     },
     {
